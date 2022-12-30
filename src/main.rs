@@ -3,17 +3,17 @@ pub mod ctx;
 pub mod endpoint;
 pub mod file;
 pub mod journal;
-pub mod slice;
 pub mod slot;
-pub mod time;
+pub mod util;
 
 use crate::const_::SLOTS_OFFSET_START;
 use crate::const_::STATE_LEN_RESERVED;
+use crate::const_::STATE_OFFSETOF_FRONTIER;
 use crate::file::SeekableAsyncFile;
 use crate::journal::clear_journal;
 use crate::journal::restore_journal;
 use crate::journal::JournalFlushing;
-use crate::slice::as_usize;
+use crate::util::as_usize;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -35,6 +35,7 @@ use std::collections::LinkedList;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::join;
@@ -51,9 +52,8 @@ async fn load_list_from_data(data_file: &SeekableAsyncFile, head_offset: u64) ->
 }
 
 struct LoadedData {
-  available_list: LinkedList<Slot>,
-  invisible_list: LinkedList<Slot>,
-  vacant_list: LinkedList<Slot>,
+  frontier: u64,
+  lists: SlotLists,
 }
 
 async fn load_data(data_file: &SeekableAsyncFile) -> LoadedData {
@@ -66,37 +66,37 @@ async fn load_data(data_file: &SeekableAsyncFile) -> LoadedData {
   let vacant_head_offset = data_file.read_u64_at(STATE_OFFSETOF_VACANT_HEAD).await;
   let vacant_list = load_list_from_data(data_file, vacant_head_offset).await;
 
-  LoadedData {
-    available_list,
-    invisible_list,
-    vacant_list,
-  }
+  let lists = SlotLists {
+    available: SlotList {
+      ready: available_list,
+      pending: LinkedList::new(),
+    },
+    invisible: SlotList {
+      ready: invisible_list,
+      pending: LinkedList::new(),
+    },
+    vacant: SlotList {
+      ready: vacant_list,
+      pending: LinkedList::new(),
+    },
+  };
+
+  let frontier = data_file.read_u64_at(STATE_OFFSETOF_FRONTIER).await;
+
+  LoadedData { frontier, lists }
 }
 
 async fn start_server_loop(
-  available_list: LinkedList<Slot>,
   data_fd: SeekableAsyncFile,
-  invisible_list: LinkedList<Slot>,
+  frontier: u64,
   journal_pending: Arc<JournalPending>,
-  vacant_list: LinkedList<Slot>,
+  lists: Arc<RwLock<SlotLists>>,
 ) {
   let ctx = Arc::new(Ctx {
     data_fd,
+    frontier: AtomicU64::new(frontier),
     journal_pending,
-    lists: RwLock::new(SlotLists {
-      available: SlotList {
-        ready: available_list,
-        pending: LinkedList::new(),
-      },
-      invisible: SlotList {
-        ready: invisible_list,
-        pending: LinkedList::new(),
-      },
-      vacant: SlotList {
-        ready: vacant_list,
-        pending: LinkedList::new(),
-      },
-    }),
+    lists,
   });
 
   let app = Router::new()
@@ -121,7 +121,7 @@ async fn format_data_file(data_file_path: &Path) {
 
   file
     .write_at(
-      STATE_OFFSETOF_VACANT_HEAD,
+      STATE_OFFSETOF_FRONTIER,
       SLOTS_OFFSET_START.to_be_bytes().to_vec(),
     )
     .await;
@@ -163,28 +163,26 @@ async fn main() {
   )
   .await;
 
-  let LoadedData {
-    available_list,
-    invisible_list,
-    vacant_list,
-  } = load_data(&SeekableAsyncFile::open(&data_file_path).await).await;
+  let LoadedData { frontier, lists } =
+    load_data(&SeekableAsyncFile::open(&data_file_path).await).await;
+  let lists = Arc::new(RwLock::new(lists));
 
   let journal_pending = Arc::new(JournalPending::new());
 
   let journal_flushing = JournalFlushing::new(
     SeekableAsyncFile::open(&data_file_path).await,
     SeekableAsyncFile::open(&journal_file_path).await,
+    lists.clone(),
     journal_pending.clone(),
   );
 
   join!(
     journal_flushing.start_flush_loop(Duration::from_millis(100)),
     start_server_loop(
-      available_list,
       SeekableAsyncFile::open(&data_file_path).await,
-      invisible_list,
+      frontier,
       journal_pending.clone(),
-      vacant_list,
+      lists.clone(),
     ),
   );
 }

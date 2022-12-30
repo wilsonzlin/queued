@@ -1,14 +1,18 @@
 use crate::const_::MESSAGE_SLOT_CONTENT_LEN_MAX;
+use crate::const_::SLOT_LEN_MAX;
 use crate::const_::SLOT_OFFSETOF_NEXT;
+use crate::const_::STATE_OFFSETOF_FRONTIER;
 use crate::const_::STATE_OFFSETOF_VACANT_HEAD;
 use crate::ctx::Ctx;
-use crate::slice::as_usize;
-use crate::time::now;
+use crate::slot::Slot;
+use crate::util::as_usize;
+use crate::util::now;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -33,7 +37,18 @@ pub async fn endpoint_push(
   let (offset, pending_write_future) = {
     let mut slots = ctx.lists.write().await;
 
-    let slot = slots.vacant.ready.pop_front().unwrap();
+    let (slot, new_frontier) = match slots.vacant.ready.pop_front() {
+      Some(slot) => (slot, None),
+      None => {
+        let new_frontier = ctx.frontier.fetch_add(SLOT_LEN_MAX, Ordering::Relaxed);
+        (
+          Slot {
+            offset: new_frontier - SLOT_LEN_MAX,
+          },
+          Some(new_frontier),
+        )
+      }
+    };
     let offset = slot.offset;
     let prev_avail_offset = slots
       .available
@@ -76,6 +91,11 @@ pub async fn endpoint_push(
       prev_avail_offset + SLOT_OFFSETOF_NEXT,
       offset.to_be_bytes().to_vec(),
     ));
+
+    // Update frontier, if applicable.
+    if let Some(new_frontier) = new_frontier {
+      journal_writes.push((STATE_OFFSETOF_FRONTIER, new_frontier.to_be_bytes().to_vec()));
+    };
 
     // Drop the lock AFTER creating the journal-write but BEFORE the future completes.
     (offset, ctx.journal_pending.write(journal_writes))

@@ -1,6 +1,8 @@
 use crate::file::SeekableAsyncFile;
-use crate::slice::u64_len;
-use crate::slice::u64_slice;
+use crate::slot::SlotLists;
+use crate::util::drain_linked_list;
+use crate::util::u64_len;
+use crate::util::u64_slice;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -8,6 +10,7 @@ use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 use std::time::Duration;
+use tokio::sync::RwLock;
 use tokio::time::sleep;
 
 pub async fn clear_journal(journal_fd: &SeekableAsyncFile) {
@@ -112,8 +115,9 @@ impl JournalPending {
 }
 
 pub struct JournalFlushing {
-  journal_fd: SeekableAsyncFile,
   data_fd: SeekableAsyncFile,
+  journal_fd: SeekableAsyncFile,
+  lists: Arc<RwLock<SlotLists>>,
   pending: Arc<JournalPending>,
 }
 
@@ -121,11 +125,13 @@ impl JournalFlushing {
   pub fn new(
     data_fd: SeekableAsyncFile,
     journal_fd: SeekableAsyncFile,
+    lists: Arc<RwLock<SlotLists>>,
     pending: Arc<JournalPending>,
   ) -> Self {
     JournalFlushing {
-      journal_fd,
       data_fd,
+      journal_fd,
+      lists,
       pending,
     }
   }
@@ -133,15 +139,26 @@ impl JournalFlushing {
   pub async fn start_flush_loop(&self, tick_rate: Duration) -> () {
     loop {
       sleep(tick_rate).await;
-      // Unzip so we can take ownership and consume/move pending writes without pending futures, as they are processed in different stages.
-      let (pending_writes, pending_futures): (Vec<_>, Vec<_>) = self
-        .pending
-        .list
-        .lock()
-        .await
-        .drain(..)
-        .map(|e| (e.writes, e.future_shared_state))
-        .unzip();
+      // We need to lock both journal pending and lists simulatenously to have a consistent view. Locking lists first should be enough, given that we always lock it first in the endpoints.
+      let (available_pending, invisible_pending, vacant_pending, pending_writes, pending_futures) = {
+        let mut lists = self.lists.write().await;
+        // Unzip so we can take ownership and consume/move pending writes without pending futures, as they are processed in different stages.
+        let (pending_writes, pending_futures): (Vec<_>, Vec<_>) = self
+          .pending
+          .list
+          .lock()
+          .await
+          .drain(..)
+          .map(|e| (e.writes, e.future_shared_state))
+          .unzip();
+        (
+          drain_linked_list(&mut lists.available.pending),
+          drain_linked_list(&mut lists.invisible.pending),
+          drain_linked_list(&mut lists.vacant.pending),
+          pending_writes,
+          pending_futures,
+        )
+      };
       if pending_writes.is_empty() {
         continue;
       };
@@ -185,7 +202,15 @@ impl JournalFlushing {
       }
       self.data_fd.sync_all().await;
 
-      // Third stage: complete futures.
+      // Third stage: move pending items in lists.
+      {
+        let mut lists = self.lists.write().await;
+        lists.available.ready.extend(available_pending);
+        lists.invisible.ready.extend(invisible_pending);
+        lists.vacant.ready.extend(vacant_pending);
+      }
+
+      // Fourth stage: complete futures.
       for e in pending_futures {
         // https://rust-lang.github.io/async-book/02_execution/03_wakeups.html
         let mut shared_state = e.lock().unwrap();

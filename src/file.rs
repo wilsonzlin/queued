@@ -1,4 +1,4 @@
-use crate::slice::u64_len;
+use crate::util::u64_len;
 use std::ops::Deref;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
