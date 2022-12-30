@@ -13,7 +13,6 @@ use crate::file::SeekableAsyncFile;
 use crate::journal::clear_journal;
 use crate::journal::restore_journal;
 use crate::journal::JournalFlushing;
-use crate::util::as_usize;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -114,10 +113,8 @@ async fn start_server_loop(
 
 async fn format_data_file(data_file_path: &Path) {
   let file = SeekableAsyncFile::create(data_file_path).await;
-  // TODO ftruncate if possible. WARNING: Must fill with zeros.
-  file
-    .write_at(0, vec![0u8; 1024 * 1024 * as_usize!(STATE_LEN_RESERVED)])
-    .await;
+  // WARNING: Must fill with zeros. File::set_len is guaranteed to fill with zeroes.
+  file.truncate(STATE_LEN_RESERVED).await;
 
   file
     .write_at(
@@ -153,8 +150,8 @@ async fn main() {
   let journal_file_path = cli.datadir.join("journal");
 
   if cli.format {
-    format_journal_file(data_file_path.as_path()).await;
-    format_data_file(journal_file_path.as_path()).await;
+    format_data_file(&data_file_path).await;
+    format_journal_file(&journal_file_path).await;
   }
 
   restore_journal(

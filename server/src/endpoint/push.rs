@@ -73,29 +73,32 @@ pub async fn endpoint_push(
     slot_data.extend_from_slice(&req.content.into_bytes());
     journal_writes.push((offset, slot_data));
 
-    // Update vacant list head.
-    journal_writes.push((
-      STATE_OFFSETOF_VACANT_HEAD,
-      slots
-        .vacant
-        .ready
-        .front()
-        .unwrap()
-        .offset
-        .to_be_bytes()
-        .to_vec(),
-    ));
+    match new_frontier {
+      Some(new_frontier) => {
+        // Update frontier.
+        journal_writes.push((STATE_OFFSETOF_FRONTIER, new_frontier.to_be_bytes().to_vec()));
+      }
+      None => {
+        // Update vacant list head.
+        journal_writes.push((
+          STATE_OFFSETOF_VACANT_HEAD,
+          slots
+            .vacant
+            .ready
+            .front()
+            .unwrap()
+            .offset
+            .to_be_bytes()
+            .to_vec(),
+        ));
+      }
+    }
 
     // Update available list tail.
     journal_writes.push((
       prev_avail_offset + SLOT_OFFSETOF_NEXT,
       offset.to_be_bytes().to_vec(),
     ));
-
-    // Update frontier, if applicable.
-    if let Some(new_frontier) = new_frontier {
-      journal_writes.push((STATE_OFFSETOF_FRONTIER, new_frontier.to_be_bytes().to_vec()));
-    };
 
     // Drop the lock AFTER creating the journal-write but BEFORE the future completes.
     (offset, ctx.journal_pending.write(journal_writes))

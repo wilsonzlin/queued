@@ -16,7 +16,7 @@ use tokio::time::sleep;
 pub async fn clear_journal(journal_fd: &SeekableAsyncFile) {
   let zero_hash = blake3::hash(&0u64.to_be_bytes());
   journal_fd.write_at(0, zero_hash.as_bytes().to_vec()).await;
-  journal_fd.write_at(8, 0u64.to_be_bytes().to_vec()).await;
+  journal_fd.write_at(32, 0u64.to_be_bytes().to_vec()).await;
 }
 
 pub async fn restore_journal(data_fd: &SeekableAsyncFile, journal_fd: &SeekableAsyncFile) {
@@ -28,7 +28,10 @@ pub async fn restore_journal(data_fd: &SeekableAsyncFile, journal_fd: &SeekableA
   actual_hasher.update(&raw);
   let actual_hash = actual_hasher.finalize();
   if actual_hash.as_bytes() != expected_hash.as_slice() {
-    panic!("journal hash is invalid");
+    panic!(
+      "journal hash is invalid; calculated {:x?} with length {} but file has {:x?}",
+      actual_hash, len, expected_hash
+    );
   }
 
   if len > 0 {

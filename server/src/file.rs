@@ -1,5 +1,4 @@
 use crate::util::u64_len;
-use std::ops::Deref;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -8,34 +7,25 @@ use tokio::task::spawn_blocking;
 // Tokio has still not implemented read_at and write_at: https://github.com/tokio-rs/tokio/issues/1529. We need these to be able to share a file descriptor across threads (e.g. use from within async function).
 // Apparently spawn_blocking is how Tokio does all file operations (as not all platforms have native async I/O), so our use is not worse but not optimised for async I/O either.
 // We considered mmap but it's a bit more complex and makes it more difficult to extend files.
-struct SeekableAsyncFileInner(std::fs::File);
-
-impl Deref for SeekableAsyncFileInner {
-  type Target = std::fs::File;
-
-  fn deref(&self) -> &Self::Target {
-    &self.0
-  }
-}
-
-pub struct SeekableAsyncFile(Arc<SeekableAsyncFileInner>);
+#[derive(Clone)]
+pub struct SeekableAsyncFile(Arc<std::fs::File>);
 
 impl SeekableAsyncFile {
   pub async fn open(path: &Path) -> Self {
     let async_fd = tokio::fs::File::open(path).await.unwrap();
     let fd = async_fd.into_std().await;
-    SeekableAsyncFile(Arc::new(SeekableAsyncFileInner(fd)))
+    SeekableAsyncFile(Arc::new(fd))
   }
 
   pub async fn create(path: &Path) -> Self {
     let async_fd = tokio::fs::File::create(path).await.unwrap();
     let fd = async_fd.into_std().await;
-    SeekableAsyncFile(Arc::new(SeekableAsyncFileInner(fd)))
+    SeekableAsyncFile(Arc::new(fd))
   }
 
   pub fn cursor(&self, pos: u64) -> SeekableAsyncFileCursor {
     SeekableAsyncFileCursor {
-      fd: SeekableAsyncFile(self.0.clone()),
+      fd: self.clone(),
       pos,
     }
   }
@@ -68,6 +58,13 @@ impl SeekableAsyncFile {
     let fd = self.0.clone();
     // WARNING: sync_all -> fsync, sync_data -> fdatasync, flush -> (no-op). https://stackoverflow.com/a/69820437/6249022
     spawn_blocking(move || fd.sync_all().unwrap())
+      .await
+      .unwrap();
+  }
+
+  pub async fn truncate(&self, len: u64) {
+    let fd = self.0.clone();
+    spawn_blocking(move || fd.set_len(len).unwrap())
       .await
       .unwrap();
   }
