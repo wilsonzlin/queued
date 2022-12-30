@@ -13,6 +13,7 @@ use crate::file::SeekableAsyncFile;
 use crate::journal::clear_journal;
 use crate::journal::restore_journal;
 use crate::journal::JournalFlushing;
+use crate::slice::as_usize;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -44,9 +45,7 @@ async fn load_list_from_data(data_file: &SeekableAsyncFile, head_offset: u64) ->
   let mut offset = head_offset;
   while offset != 0 {
     list.push_back(Slot { offset });
-    offset = data_file
-      .read_u64_at(offset as usize + SLOT_OFFSETOF_NEXT)
-      .await;
+    offset = data_file.read_u64_at(offset + SLOT_OFFSETOF_NEXT).await;
   }
   list
 }
@@ -58,19 +57,13 @@ struct LoadedData {
 }
 
 async fn load_data(data_file: &SeekableAsyncFile) -> LoadedData {
-  let available_head_offset = data_file
-    .read_u64_at(STATE_OFFSETOF_AVAILABLE_HEAD as usize)
-    .await;
+  let available_head_offset = data_file.read_u64_at(STATE_OFFSETOF_AVAILABLE_HEAD).await;
   let available_list = load_list_from_data(data_file, available_head_offset).await;
 
-  let invisible_head_offset = data_file
-    .read_u64_at(STATE_OFFSETOF_INVISIBLE_HEAD as usize)
-    .await;
+  let invisible_head_offset = data_file.read_u64_at(STATE_OFFSETOF_INVISIBLE_HEAD).await;
   let invisible_list = load_list_from_data(data_file, invisible_head_offset).await;
 
-  let vacant_head_offset = data_file
-    .read_u64_at(STATE_OFFSETOF_VACANT_HEAD as usize)
-    .await;
+  let vacant_head_offset = data_file.read_u64_at(STATE_OFFSETOF_VACANT_HEAD).await;
   let vacant_list = load_list_from_data(data_file, vacant_head_offset).await;
 
   LoadedData {
@@ -123,7 +116,7 @@ async fn format_data_file(data_file_path: &Path) {
   let file = SeekableAsyncFile::create(data_file_path).await;
   // TODO ftruncate if possible. WARNING: Must fill with zeros.
   file
-    .write_at(0, vec![0u8; 1024 * 1024 * STATE_LEN_RESERVED])
+    .write_at(0, vec![0u8; 1024 * 1024 * as_usize!(STATE_LEN_RESERVED)])
     .await;
 
   file

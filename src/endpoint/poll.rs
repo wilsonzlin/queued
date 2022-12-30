@@ -7,7 +7,7 @@ use crate::const_::SLOT_OFFSETOF_POLL_COUNT;
 use crate::const_::SLOT_OFFSETOF_VISIBLE_TS;
 use crate::const_::STATE_OFFSETOF_AVAILABLE_HEAD;
 use crate::ctx::Ctx;
-use crate::slice::slice_len;
+use crate::slice::u64_slice;
 use crate::time::now;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -55,38 +55,38 @@ pub async fn endpoint_poll(
 
       let mut journal_writes = vec![];
 
-      let raw_data = ctx.data_fd.read_at(offset as usize, SLOT_LEN_MAX).await;
+      let raw_data = ctx.data_fd.read_at(offset, SLOT_LEN_MAX).await;
 
       let next_avail_offset = u64::from_be_bytes(
-        slice_len(&raw_data, SLOT_OFFSETOF_NEXT, 8)
+        u64_slice(&raw_data, SLOT_OFFSETOF_NEXT, 8)
           .try_into()
           .unwrap(),
       );
       let new_poll_count = u32::from_be_bytes(
-        slice_len(&raw_data, SLOT_OFFSETOF_POLL_COUNT, 4)
+        u64_slice(&raw_data, SLOT_OFFSETOF_POLL_COUNT, 4)
           .try_into()
           .unwrap(),
       ) + 1;
 
       // Update visible timestamp and poll count.
       journal_writes.push((
-        offset + SLOT_OFFSETOF_VISIBLE_TS as u64,
+        offset + SLOT_OFFSETOF_VISIBLE_TS,
         now().to_be_bytes().to_vec(),
       ));
       journal_writes.push((
-        offset + SLOT_OFFSETOF_POLL_COUNT as u64,
+        offset + SLOT_OFFSETOF_POLL_COUNT,
         new_poll_count.to_be_bytes().to_vec(),
       ));
 
       // Update available list head.
       journal_writes.push((
-        STATE_OFFSETOF_AVAILABLE_HEAD as u64,
+        STATE_OFFSETOF_AVAILABLE_HEAD,
         next_avail_offset.to_be_bytes().to_vec(),
       ));
 
       // Update invisible list tail.
       journal_writes.push((
-        prev_invis_offset + SLOT_OFFSETOF_NEXT as u64,
+        prev_invis_offset + SLOT_OFFSETOF_NEXT,
         offset.to_be_bytes().to_vec(),
       ));
 
@@ -104,18 +104,19 @@ pub async fn endpoint_poll(
 
   let message = if let Some((offset, poll_count, raw_data, pending_write_future)) = polled {
     pending_write_future.await;
-    let len = u16::from_be_bytes(
-      slice_len(&raw_data, SLOT_OFFSETOF_LEN, 2)
+    let len: u64 = u16::from_be_bytes(
+      u64_slice(&raw_data, SLOT_OFFSETOF_LEN, 2)
         .try_into()
         .unwrap(),
-    ) as usize;
+    )
+    .into();
     Some(EndpointPollOutputMessage {
-      contents: String::from_utf8(slice_len(&raw_data, SLOT_OFFSETOF_CONTENTS, len).to_vec())
+      contents: String::from_utf8(u64_slice(&raw_data, SLOT_OFFSETOF_CONTENTS, len).to_vec())
         .unwrap(),
       created: Utc
         .timestamp_millis_opt(
           i64::from_be_bytes(
-            slice_len(&raw_data, SLOT_OFFSETOF_CREATED_TS, 8)
+            u64_slice(&raw_data, SLOT_OFFSETOF_CREATED_TS, 8)
               .try_into()
               .unwrap(),
           ) * 1000,

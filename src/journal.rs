@@ -1,4 +1,6 @@
 use crate::file::SeekableAsyncFile;
+use crate::slice::u64_len;
+use crate::slice::u64_slice;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,7 +19,7 @@ pub async fn clear_journal(journal_fd: &SeekableAsyncFile) {
 pub async fn restore_journal(data_fd: &SeekableAsyncFile, journal_fd: &SeekableAsyncFile) {
   let expected_hash = journal_fd.read_at(0, 32).await;
   let len = journal_fd.read_u64_at(32).await;
-  let raw = journal_fd.read_at(8, len as usize).await;
+  let raw = journal_fd.read_at(8, len).await;
   let mut actual_hasher = blake3::Hasher::new();
   actual_hasher.update(&len.to_be_bytes());
   actual_hasher.update(&raw);
@@ -27,25 +29,25 @@ pub async fn restore_journal(data_fd: &SeekableAsyncFile, journal_fd: &SeekableA
   }
 
   if len > 0 {
-    println!("Recovering {} segments", len);
+    println!("Restoring journal");
 
-    let mut cur = 0;
-    while cur < raw.len() {
-      let offset = u64::from_be_bytes(raw[cur..cur + 8].try_into().unwrap());
+    let mut cur = 0u64;
+    while cur < len {
+      let offset = u64::from_be_bytes(u64_slice(&raw, cur, 8).try_into().unwrap());
       cur += 8;
 
-      let data_len = u64::from_be_bytes(raw[cur..cur + 8].try_into().unwrap()) as usize;
+      let data_len = u64::from_be_bytes(u64_slice(&raw, cur, 8).try_into().unwrap());
       cur += 8;
 
-      let data = &raw[cur..cur + data_len];
+      let data = u64_slice(&raw, cur, data_len);
       cur += data_len;
 
       println!("Recovering {} bytes at {}", data_len, offset);
-      data_fd.write_at(offset as usize, data.to_vec()).await;
+      data_fd.write_at(offset, data.to_vec()).await;
     }
     data_fd.sync_all().await;
 
-    println!("Recovered {} segments", len);
+    println!("Restored journal");
     clear_journal(journal_fd).await;
     println!("Journal cleared");
   }
@@ -149,10 +151,10 @@ impl JournalFlushing {
       // 32 bytes for hash and 8 bytes for length. We must write hash first as otherwise we have to read the length to know where hash is stored but the length metadata itself may be corrupted.
       let mut cur = self.journal_fd.cursor(40);
       // We need to include the length in the hash, so we need a separate initial pass to calculate the length first.
-      let len = pending_writes
+      let len: u64 = pending_writes
         .iter()
-        .map(|p| p.iter().map(|w| 8 + 8 + w.1.len()).sum::<usize>())
-        .sum::<usize>() as u64;
+        .map(|p| p.iter().map(|w| 8 + 8 + u64_len(&w.1)).sum::<u64>())
+        .sum();
       hasher.update(&len.to_be_bytes());
       for e in pending_writes.iter() {
         for (offset, data) in e.iter() {
@@ -160,7 +162,7 @@ impl JournalFlushing {
           hasher.update(&offset_encoded);
           cur.write_all(offset_encoded.to_vec()).await;
 
-          let data_len_encoded = (data.len() as u64).to_be_bytes();
+          let data_len_encoded = u64_len(data).to_be_bytes();
           hasher.update(&data_len_encoded);
           cur.write_all(data_len_encoded.to_vec()).await;
 
@@ -178,7 +180,7 @@ impl JournalFlushing {
       // To avoid repeatedly flushing, we write everything then flush once afterwards. However, this means we cannot mark futures as completed until the flush succeeds, so we'll need another loop after this one.
       for e in pending_writes {
         for (offset, data) in e {
-          self.data_fd.write_at(offset as usize, data).await;
+          self.data_fd.write_at(offset, data).await;
         }
       }
       self.data_fd.sync_all().await;

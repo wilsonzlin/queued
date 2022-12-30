@@ -2,6 +2,7 @@ use crate::const_::MESSAGE_SLOT_CONTENT_LEN_MAX;
 use crate::const_::SLOT_OFFSETOF_NEXT;
 use crate::const_::STATE_OFFSETOF_VACANT_HEAD;
 use crate::ctx::Ctx;
+use crate::slice::as_usize;
 use crate::time::now;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -24,7 +25,7 @@ pub async fn endpoint_push(
   State(ctx): State<Arc<Ctx>>,
   Json(req): Json<EndpointPushInput>,
 ) -> Result<Json<EndpointPushOutput>, (StatusCode, &'static str)> {
-  if req.content.len() > MESSAGE_SLOT_CONTENT_LEN_MAX as usize {
+  if req.content.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
     return Err((StatusCode::PAYLOAD_TOO_LARGE, "content is too large"));
   };
 
@@ -45,19 +46,21 @@ pub async fn endpoint_push(
 
     let mut journal_writes = vec![];
 
+    let content_len: u16 = req.content.len().try_into().unwrap();
+
     // Populate slot.
     let mut slot_data = vec![];
     slot_data.extend_from_slice(&0i64.to_be_bytes());
     slot_data.extend_from_slice(&now().to_be_bytes());
     slot_data.extend_from_slice(&0u32.to_be_bytes());
     slot_data.extend_from_slice(&0u64.to_be_bytes());
-    slot_data.extend_from_slice(&(req.content.len() as u16).to_be_bytes());
+    slot_data.extend_from_slice(&content_len.to_be_bytes());
     slot_data.extend_from_slice(&req.content.into_bytes());
     journal_writes.push((offset, slot_data));
 
     // Update vacant list head.
     journal_writes.push((
-      STATE_OFFSETOF_VACANT_HEAD as u64,
+      STATE_OFFSETOF_VACANT_HEAD,
       slots
         .vacant
         .ready
@@ -70,7 +73,7 @@ pub async fn endpoint_push(
 
     // Update available list tail.
     journal_writes.push((
-      prev_avail_offset + SLOT_OFFSETOF_NEXT as u64,
+      prev_avail_offset + SLOT_OFFSETOF_NEXT,
       offset.to_be_bytes().to_vec(),
     ));
 
