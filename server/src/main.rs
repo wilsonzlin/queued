@@ -174,7 +174,7 @@ async fn main() {
   );
 
   join!(
-    journal_flushing.start_flush_loop(Duration::from_millis(100)),
+    journal_flushing.start_flush_loop(Duration::from_millis(1)),
     start_server_loop(
       SeekableAsyncFile::open(&data_file_path).await,
       frontier,
