@@ -1,4 +1,4 @@
-use crate::const_::SLOT_LEN_MAX;
+use crate::const_::SLOT_FIXED_FIELDS_LEN;
 use crate::const_::SLOT_OFFSETOF_CONTENTS;
 use crate::const_::SLOT_OFFSETOF_CREATED_TS;
 use crate::const_::SLOT_OFFSETOF_LEN;
@@ -55,7 +55,15 @@ pub async fn endpoint_poll(
 
       let mut journal_writes = vec![];
 
-      let raw_data = ctx.data_fd.read_at(offset, SLOT_LEN_MAX).await;
+      // Two reasons of reading length first (and making an extra pread() syscall) instead of directly reading maximum slot length:
+      // - Avoid allocating and reading extra unnecessary bytes.
+      // - This will fail if the last slot doesn't have a maximum-length content (we'll reach EOF before filling buffer).
+      let content_len = ctx.data_fd.read_u16_at(offset + SLOT_OFFSETOF_LEN).await;
+
+      let raw_data = ctx
+        .data_fd
+        .read_at(offset, SLOT_FIXED_FIELDS_LEN + content_len as u64)
+        .await;
 
       let next_avail_offset = u64::from_be_bytes(
         u64_slice(&raw_data, SLOT_OFFSETOF_NEXT, 8)

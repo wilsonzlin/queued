@@ -65,8 +65,8 @@ pub async fn endpoint_push(
 
     // Populate slot.
     let mut slot_data = vec![];
-    slot_data.extend_from_slice(&0i64.to_be_bytes());
     slot_data.extend_from_slice(&now().to_be_bytes());
+    slot_data.extend_from_slice(&0i64.to_be_bytes());
     slot_data.extend_from_slice(&0u32.to_be_bytes());
     slot_data.extend_from_slice(&0u64.to_be_bytes());
     slot_data.extend_from_slice(&content_len.to_be_bytes());

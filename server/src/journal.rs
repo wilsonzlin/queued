@@ -165,6 +165,7 @@ impl JournalFlushing {
       if pending_writes.is_empty() {
         continue;
       };
+      println!("Starting journal flush of {} entries", pending_writes.len());
 
       // First stage: write journal.
       let mut hasher = blake3::Hasher::new();
@@ -222,6 +223,9 @@ impl JournalFlushing {
           waker.wake();
         }
       }
+
+      // Fifth stage: clear journal.
+      clear_journal(&self.journal_fd).await;
     }
   }
 }

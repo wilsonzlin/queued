@@ -2,6 +2,8 @@ use crate::util::u64_len;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::fs::File;
+use tokio::fs::OpenOptions;
 use tokio::task::spawn_blocking;
 
 // Tokio has still not implemented read_at and write_at: https://github.com/tokio-rs/tokio/issues/1529. We need these to be able to share a file descriptor across threads (e.g. use from within async function).
@@ -12,13 +14,18 @@ pub struct SeekableAsyncFile(Arc<std::fs::File>);
 
 impl SeekableAsyncFile {
   pub async fn open(path: &Path) -> Self {
-    let async_fd = tokio::fs::File::open(path).await.unwrap();
+    let async_fd = OpenOptions::new()
+      .read(true)
+      .write(true)
+      .open(path)
+      .await
+      .unwrap();
     let fd = async_fd.into_std().await;
     SeekableAsyncFile(Arc::new(fd))
   }
 
   pub async fn create(path: &Path) -> Self {
-    let async_fd = tokio::fs::File::create(path).await.unwrap();
+    let async_fd = File::create(path).await.unwrap();
     let fd = async_fd.into_std().await;
     SeekableAsyncFile(Arc::new(fd))
   }
@@ -33,13 +40,18 @@ impl SeekableAsyncFile {
   // Since spawn_blocking requires 'static lifetime, we don't have a read_into_at function taht takes a &mut [u8] buffer, as it would be more like a Arc<Mutex<Vec<u8>>>, at which point the overhead is not really worth it for small reads.
   pub async fn read_at(&self, offset: u64, len: u64) -> Vec<u8> {
     let fd = self.0.clone();
-    let mut buf = vec![0u8; len.try_into().unwrap()];
     spawn_blocking(move || {
+      let mut buf = vec![0u8; len.try_into().unwrap()];
       fd.read_exact_at(&mut buf, offset).unwrap();
       buf
     })
     .await
     .unwrap()
+  }
+
+  pub async fn read_u16_at(&self, offset: u64) -> u16 {
+    let bytes = self.read_at(offset, 2).await;
+    u16::from_be_bytes(bytes.try_into().unwrap())
   }
 
   pub async fn read_u64_at(&self, offset: u64) -> u64 {
