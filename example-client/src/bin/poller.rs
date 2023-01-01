@@ -1,19 +1,13 @@
-use std::cmp::Ordering;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-use std::ops::Deref;
-use std::ops::DerefMut;
-
 use chrono::DateTime;
 use chrono::Utc;
-use clap::Parser;
 use clap::command;
+use clap::Parser;
 use futures::future::join_all;
 use roaring::RoaringBitmap;
 use serde::Deserialize;
-use serde::Serialize;
 use serde_json::json;
-use serde_json::Value;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 use tokio::time::Instant;
 
 #[derive(Deserialize)]
@@ -50,7 +44,7 @@ async fn execute() -> RoaringBitmap {
     } else {
       break;
     };
-  };
+  }
   bitmap
 }
 
@@ -67,23 +61,23 @@ struct Cli {
 struct RoaringBitmapRevOrdByMin(RoaringBitmap);
 
 impl PartialEq for RoaringBitmapRevOrdByMin {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
+  fn eq(&self, other: &Self) -> bool {
+    self.0 == other.0
+  }
 }
 
 impl Eq for RoaringBitmapRevOrdByMin {}
 
 impl PartialOrd for RoaringBitmapRevOrdByMin {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.0.min().unwrap().cmp(&other.0.min().unwrap()).reverse())
-    }
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.0.min().unwrap().cmp(&other.0.min().unwrap()).reverse())
+  }
 }
 
 impl Ord for RoaringBitmapRevOrdByMin {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
-    }
+  fn cmp(&self, other: &Self) -> Ordering {
+    self.partial_cmp(other).unwrap()
+  }
 }
 
 #[tokio::main]
@@ -102,7 +96,7 @@ async fn main() {
     if !bitmap.is_empty() {
       bitmaps.push(RoaringBitmapRevOrdByMin(bitmap));
     };
-  };
+  }
   let mut expected_next_id = 0;
   while let Some(mut bitmap) = bitmaps.pop() {
     let id = bitmap.0.min().unwrap();
@@ -112,7 +106,7 @@ async fn main() {
     if !bitmap.0.is_empty() {
       bitmaps.push(bitmap);
     };
-  };
+  }
   assert_eq!(args.count, expected_next_id);
 
   println!(
