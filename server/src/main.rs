@@ -180,8 +180,14 @@ async fn main() {
 
   let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;
 
+  let server_fut = start_server_loop(RwLock::new(available), device.clone(), RwLock::new(vacant));
+
+  #[cfg(feature = "fsync_delayed")]
   join! {
-    start_server_loop(RwLock::new(available), device.clone(), RwLock::new(vacant)),
+    server_fut,
     device.start_delayed_data_sync_background_loop(),
   };
+
+  #[cfg(not(feature = "fsync_delayed"))]
+  server_fut.await;
 }

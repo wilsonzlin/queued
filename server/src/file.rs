@@ -15,14 +15,20 @@ use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 
 const DELAYED_SYNC_BYTES_THRESHOLD: usize = 4 * 1024 * 1024;
+const DELAYED_SYNC_US: u64 = 100;
+
+struct PendingSyncState {
+  unsynced_bytes: usize,
+  unsynced_since: Instant,
+  pending_sync_fut_states: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
+}
 
 // Tokio has still not implemented read_at and write_at: https://github.com/tokio-rs/tokio/issues/1529. We need these to be able to share a file descriptor across threads (e.g. use from within async function).
 // Apparently spawn_blocking is how Tokio does all file operations (as not all platforms have native async I/O), so our use is not worse but not optimised for async I/O either.
 #[derive(Clone)]
 pub struct SeekableAsyncFile {
   fd: Arc<std::fs::File>,
-  unsynced: Arc<Mutex<(usize, Instant)>>,
-  pending_sync_fut_states: Arc<Mutex<Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>>>,
+  pending_sync_state: Arc<Mutex<PendingSyncState>>,
 }
 
 struct PendingSyncFutureState {
@@ -52,8 +58,11 @@ impl SeekableAsyncFile {
   fn from_fd(fd: std::fs::File) -> Self {
     SeekableAsyncFile {
       fd: Arc::new(fd),
-      unsynced: Arc::new(Mutex::new((0, Instant::now()))),
-      pending_sync_fut_states: Arc::new(Mutex::new(Vec::new())),
+      pending_sync_state: Arc::new(Mutex::new(PendingSyncState {
+        unsynced_bytes: 0,
+        unsynced_since: Instant::now(),
+        pending_sync_fut_states: Vec::new(),
+      })),
     }
   }
 
@@ -110,59 +119,60 @@ impl SeekableAsyncFile {
       .await
       .unwrap();
     {
-      let mut state = self.unsynced.lock().await;
-      state.0 += len;
+      let mut state = self.pending_sync_state.lock().await;
+      state.unsynced_bytes += len;
     };
   }
 
   #[cfg(feature = "fsync_delayed")]
-  async fn perform_delayed_data_sync_now(&self) {
-    let fut_states = {
-      let mut state = self.pending_sync_fut_states.lock().await;
-      state.drain(..).collect_vec()
+  async fn maybe_perform_delayed_data_sync_now(&self, keep_waiting: bool) {
+    let (fut_states, created_fut) = {
+      let mut state = self.pending_sync_state.lock().await;
+      let has_pending_futs = !state.pending_sync_fut_states.is_empty();
+      let met_bytes_threshold = state.unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
+      let met_deadline = state.unsynced_since.elapsed().as_micros() >= u128::from(DELAYED_SYNC_US);
+      if has_pending_futs && (met_bytes_threshold || met_deadline) {
+        state.unsynced_bytes = 0;
+        state.unsynced_since = Instant::now();
+        (
+          Some(state.pending_sync_fut_states.drain(..).collect_vec()),
+          None,
+        )
+      } else if keep_waiting {
+        let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
+          completed: false,
+          waker: None,
+        }));
+        state.pending_sync_fut_states.push(fut_state.clone());
+        (
+          None,
+          Some(PendingSyncFuture {
+            shared_state: fut_state,
+          }),
+        )
+      } else {
+        (None, None)
+      }
     };
-    // Handle possible race condition, where multiple calls to this function happened simultaneously.
-    if fut_states.is_empty() {
-      return;
+    if let Some(fut_states) = fut_states {
+      assert!(!fut_states.is_empty());
+      self.sync_data().await;
+      for ft in fut_states {
+        let mut ft = ft.lock().unwrap();
+        ft.completed = true;
+        if let Some(waker) = ft.waker.take() {
+          waker.wake();
+        };
+      }
     };
-    self.sync_data().await;
-    for ft in fut_states {
-      let mut ft = ft.lock().unwrap();
-      ft.completed = true;
-      if let Some(waker) = ft.waker.take() {
-        waker.wake();
-      };
-    }
+    if let Some(fut) = created_fut {
+      fut.await;
+    };
   }
 
   #[cfg(feature = "fsync_delayed")]
   pub async fn sync_data_delayed(&self) {
-    let should_sync = {
-      let mut state = self.unsynced.lock().await;
-      if state.0 >= DELAYED_SYNC_BYTES_THRESHOLD {
-        state.0 = 0;
-        state.1 = Instant::now();
-        true
-      } else {
-        false
-      }
-    };
-    if should_sync {
-      self.perform_delayed_data_sync_now().await;
-    } else {
-      let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
-        completed: false,
-        waker: None,
-      }));
-      {
-        let mut fut_states = self.pending_sync_fut_states.lock().await;
-        fut_states.push(fut_state.clone());
-      };
-      PendingSyncFuture {
-        shared_state: fut_state.clone(),
-      }
-      .await
-    };
+    self.maybe_perform_delayed_data_sync_now(true).await;
   }
 
   #[cfg(feature = "fsync_immediate")]
@@ -175,29 +185,9 @@ impl SeekableAsyncFile {
 
   #[cfg(feature = "fsync_delayed")]
   pub async fn start_delayed_data_sync_background_loop(&self) {
-    const INTERVAL_US: u64 = 100;
     loop {
-      sleep(std::time::Duration::from_micros(INTERVAL_US)).await;
-      let should_sync = {
-        let mut state = self.unsynced.lock().await;
-        if state.0 > 0 && state.1.elapsed().as_micros() >= u128::from(INTERVAL_US) {
-          state.0 = 0;
-          state.1 = Instant::now();
-          true
-        } else {
-          false
-        }
-      };
-      if should_sync {
-        self.perform_delayed_data_sync_now().await;
-      };
-    }
-  }
-
-  #[cfg(not(feature = "fsync_delayed"))]
-  pub async fn start_delayed_data_sync_background_loop(&self) {
-    loop {
-      sleep(std::time::Duration::from_secs(2)).await;
+      sleep(std::time::Duration::from_micros(DELAYED_SYNC_US)).await;
+      self.maybe_perform_delayed_data_sync_now(false).await;
     }
   }
 
