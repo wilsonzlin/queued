@@ -36,7 +36,7 @@ pub struct EndpointPollInput {
 pub struct EndpointPollOutputMessage {
   contents: String,
   created: DateTime<Utc>,
-  index: u64,
+  index: u32,
   poll_count: u32,
   poll_tag: String,
 }
@@ -52,17 +52,18 @@ pub async fn endpoint_poll(
 ) -> Result<Json<EndpointPollOutput>, (StatusCode, &'static str)> {
   let poll_time = Utc::now();
 
-  let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
+  let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);
 
-  let index: u64 = {
+  let index = {
     let mut available = ctx.available.write().await;
-    let Some(index) = available.poll(&poll_time, visible_time.clone()) else {
+    // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
+    let Some(index) = available.remove_earliest_up_to(&poll_time) else {
       return Ok(Json(EndpointPollOutput { message: None }));
     };
-    index.into()
+    index
   };
 
-  let slot_offset = index * SLOT_LEN;
+  let slot_offset = u64::from(index) * SLOT_LEN;
   let mut slot_data = ctx.device.read_at(slot_offset, SLOT_LEN).await;
 
   let mut poll_tag = vec![0u8; 30];
@@ -112,6 +113,12 @@ pub async fn endpoint_poll(
   let hash = blake3::hash(&slot_data[32..]);
   u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
   ctx.device.write_at(slot_offset, slot_data).await;
+
+  {
+    let mut available = ctx.available.write().await;
+    available.insert(index, visible_time);
+  };
+
   ctx.device.sync_all().await;
 
   Ok(Json(EndpointPollOutput {

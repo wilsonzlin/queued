@@ -1,3 +1,5 @@
+use crate::util::as_usize;
+use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
 
 #[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
@@ -19,3 +21,12 @@ pub const SLOT_OFFSETOF_LEN: u64 = SLOT_OFFSETOF_POLL_COUNT + 4;
 pub const SLOT_OFFSETOF_CONTENTS: u64 = SLOT_OFFSETOF_LEN + 2;
 pub const SLOT_FIXED_FIELDS_LEN: u64 = SLOT_OFFSETOF_CONTENTS;
 pub const MESSAGE_SLOT_CONTENT_LEN_MAX: u64 = SLOT_LEN - SLOT_FIXED_FIELDS_LEN;
+
+lazy_static! {
+  pub static ref SLOT_VACANT_TEMPLATE: Vec<u8> = {
+    let mut slot_template = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
+    let hash = blake3::hash(&slot_template[32..]);
+    slot_template[..32].copy_from_slice(hash.as_bytes());
+    slot_template
+  };
+}

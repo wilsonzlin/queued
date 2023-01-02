@@ -11,6 +11,8 @@ use tokio::time::Instant;
 #[derive(Deserialize)]
 struct PollOutputMessage {
   contents: String,
+  index: u32,
+  poll_tag: String,
 }
 
 #[derive(Deserialize)]
@@ -40,6 +42,17 @@ async fn execute() -> RoaringBitmap {
         panic!("failed to parse: {}", msg.contents);
       };
       bitmap.insert(id);
+      client
+        .post("http://127.0.0.1:3333/delete")
+        .json(&json!({
+          "index": msg.index,
+          "poll_tag": msg.poll_tag,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
     } else {
       break;
     };
@@ -109,7 +122,7 @@ async fn main() {
   assert_eq!(args.count, expected_next_id);
 
   println!(
-    "Polled {} messages with {} concurrency in {} seconds",
+    "Polled and deleted {} messages with {} concurrency in {} seconds",
     args.count,
     args.concurrency,
     exec_dur.as_secs_f64()

@@ -5,6 +5,7 @@ pub mod file;
 pub mod util;
 
 use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
+use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::file::SeekableAsyncFile;
 use axum::routing::post;
 use axum::Router;
@@ -23,6 +24,7 @@ use const_::SLOT_OFFSETOF_VISIBLE_TS;
 use croaring::Bitmap;
 use ctx::AvailableSlots;
 use ctx::Ctx;
+use endpoint::delete::endpoint_delete;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use std::net::SocketAddr;
@@ -44,6 +46,7 @@ async fn start_server_loop(
   });
 
   let app = Router::new()
+    .route("/delete", post(endpoint_delete))
     .route("/poll", post(endpoint_poll))
     .route("/push", post(endpoint_push))
     .with_state(ctx.clone());
@@ -57,14 +60,10 @@ async fn start_server_loop(
 }
 
 async fn format_device(dev: &SeekableAsyncFile) {
-  let mut slot_template = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
-  let hash = blake3::hash(&slot_template[32..]);
-  slot_template[..32].copy_from_slice(hash.as_bytes());
-
   let mut next = 0;
   let end = dev.size().await;
   while next < end {
-    dev.write_at(next, slot_template.clone()).await;
+    dev.write_at(next, SLOT_VACANT_TEMPLATE.clone()).await;
     next += SLOT_LEN;
   }
 

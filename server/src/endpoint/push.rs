@@ -20,7 +20,7 @@ pub struct EndpointPushInput {
 
 #[derive(Serialize)]
 pub struct EndpointPushOutput {
-  index: u64,
+  index: u32,
 }
 
 pub async fn endpoint_push(
@@ -37,15 +37,15 @@ pub async fn endpoint_push(
 
   let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  let index: u64 = {
+  let index = {
     let mut vacant = ctx.vacant.write().await;
     let Some(index) = vacant.minimum() else {
       return Err((StatusCode::INSUFFICIENT_STORAGE, "queue is currently full"));
     };
     vacant.remove(index);
-    index.into()
+    index
   };
-  let slot_offset = index * SLOT_LEN;
+  let slot_offset = u64::from(index) * SLOT_LEN;
 
   let content_len: u16 = req.content.len().try_into().unwrap();
 
@@ -64,10 +64,10 @@ pub async fn endpoint_push(
   slot_data[..32].copy_from_slice(hash.as_bytes());
   ctx.device.write_at(slot_offset, slot_data).await;
 
-  // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync.
+  // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync. This also prevents a poller to mangle our write when they update the slot data.
   {
     let mut available = ctx.available.write().await;
-    available.insert(index.try_into().unwrap(), visible_time);
+    available.insert(index, visible_time);
   };
 
   ctx.device.sync_all().await;

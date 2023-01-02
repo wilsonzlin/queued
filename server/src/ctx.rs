@@ -44,6 +44,10 @@ impl AvailableSlots {
     };
   }
 
+  pub fn has(&self, index: u32) -> bool {
+    self.by_index.contains_key(&index)
+  }
+
   pub fn remove(&mut self, index: u32) -> Option<()> {
     let ts = self.by_index.remove(&index)?;
     let set = self.ordered_by_visible_time.get_mut(&ts).unwrap();
@@ -79,13 +83,13 @@ impl AvailableSlots {
     self.ordered_by_visible_time.first_key_value()
   }
 
-  pub fn poll(&mut self, up_to_ts: &DateTime<Utc>, new_visible_time: DateTime<Utc>) -> Option<u32> {
+  pub fn remove_earliest_up_to(&mut self, up_to_ts: &DateTime<Utc>) -> Option<u32> {
     let indices = self
       .ordered_by_visible_time
       .first_entry()
       .filter(|e| e.key() <= up_to_ts)?;
     let index = *indices.get().iter().next().unwrap();
-    self.update_timestamp(index, new_visible_time);
+    self.remove(index).unwrap();
     Some(index)
   }
 }
