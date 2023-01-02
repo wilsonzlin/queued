@@ -113,13 +113,12 @@ pub async fn endpoint_poll(
   let hash = blake3::hash(&slot_data[32..]);
   u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
   ctx.device.write_at(slot_offset, slot_data).await;
+  ctx.device.sync_data_delayed().await;
 
   {
     let mut available = ctx.available.write().await;
     available.insert(index, visible_time);
   };
-
-  ctx.device.sync_all().await;
 
   Ok(Json(EndpointPollOutput {
     message: Some(EndpointPollOutputMessage {

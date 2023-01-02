@@ -60,6 +60,7 @@ pub async fn endpoint_delete(
     .device
     .write_at(slot_offset, SLOT_VACANT_TEMPLATE.clone())
     .await;
+  ctx.device.sync_data_delayed().await;
 
   {
     let mut vacant = ctx.vacant.write().await;
@@ -67,8 +68,6 @@ pub async fn endpoint_delete(
       panic!("slot already exists");
     };
   };
-
-  ctx.device.sync_all().await;
 
   Ok(Json(EndpointDeleteOutput {}))
 }

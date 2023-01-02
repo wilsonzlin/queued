@@ -30,6 +30,7 @@ use endpoint::push::endpoint_push;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::join;
 use tokio::sync::RwLock;
 use util::as_usize;
 use util::u64_slice;
@@ -179,5 +180,8 @@ async fn main() {
 
   let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;
 
-  start_server_loop(RwLock::new(available), device, RwLock::new(vacant)).await;
+  join! {
+    start_server_loop(RwLock::new(available), device.clone(), RwLock::new(vacant)),
+    device.start_delayed_data_sync_background_loop(),
+  };
 }

@@ -3,6 +3,12 @@ name = "queued"
 version = "0.0.1"
 edition = "2021"
 
+[features]
+default = ["fsync_delayed"]
+fsync_delayed = []
+fsync_immediate = []
+unsafe_fsync_none = [] # For benchmarking purposes only!
+
 [dependencies]
 axum = { version = "0.6", features = ["headers"] }
 blake3 = "1.3"
