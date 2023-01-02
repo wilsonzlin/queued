@@ -1,28 +1,26 @@
+use crate::const_::SlotState;
 use crate::const_::MESSAGE_SLOT_CONTENT_LEN_MAX;
-use crate::const_::SLOT_LEN_MAX;
-use crate::const_::SLOT_OFFSETOF_NEXT;
-use crate::const_::STATE_OFFSETOF_FRONTIER;
-use crate::const_::STATE_OFFSETOF_VACANT_HEAD;
+use crate::const_::SLOT_LEN;
 use crate::ctx::Ctx;
-use crate::slot::Slot;
 use crate::util::as_usize;
-use crate::util::now;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use chrono::Duration;
+use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct EndpointPushInput {
   content: String,
+  visibility_timeout_secs: i64,
 }
 
 #[derive(Serialize)]
 pub struct EndpointPushOutput {
-  offset: u64,
+  index: u64,
 }
 
 pub async fn endpoint_push(
@@ -33,78 +31,46 @@ pub async fn endpoint_push(
     return Err((StatusCode::PAYLOAD_TOO_LARGE, "content is too large"));
   };
 
-  // We must hold the lock until we journal-write. We can get a consistent view of the updated heads across lists, but we still need to ensure this update is written before any other API does any update.
-  let (offset, pending_write_future) = {
-    let mut slots = ctx.lists.write().await;
+  if req.visibility_timeout_secs < 0 {
+    return Err((StatusCode::BAD_REQUEST, "visibility timeout is negative"));
+  }
 
-    let (slot, new_frontier) = match slots.vacant.ready.pop_front() {
-      Some(slot) => (slot, None),
-      None => {
-        let new_frontier = ctx.frontier.fetch_add(SLOT_LEN_MAX, Ordering::Relaxed);
-        (
-          Slot {
-            offset: new_frontier - SLOT_LEN_MAX,
-          },
-          Some(new_frontier),
-        )
-      }
+  let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
+
+  let index: u64 = {
+    let mut vacant = ctx.vacant.write().await;
+    let Some(index) = vacant.minimum() else {
+      return Err((StatusCode::INSUFFICIENT_STORAGE, "queue is currently full"));
     };
-    let offset = slot.offset;
-    let prev_avail_offset = slots
-      .available
-      .pending
-      .back()
-      .map(|p| p.offset)
-      .or_else(|| slots.available.ready.back().map(|p| p.offset))
-      .unwrap_or(0);
-    slots.available.pending.push_back(slot);
+    vacant.remove(index);
+    index.into()
+  };
+  let slot_offset = index * SLOT_LEN;
 
-    let mut journal_writes = vec![];
+  let content_len: u16 = req.content.len().try_into().unwrap();
 
-    let content_len: u16 = req.content.len().try_into().unwrap();
+  // Populate slot.
+  let mut slot_data = vec![];
+  slot_data.extend_from_slice(&vec![0u8; 32]); // Placeholder for hash.
+  slot_data.push(1);
+  slot_data.push(SlotState::Available as u8);
+  slot_data.extend_from_slice(&vec![0u8; 30]);
+  slot_data.extend_from_slice(&Utc::now().timestamp().to_be_bytes());
+  slot_data.extend_from_slice(&visible_time.timestamp().to_be_bytes());
+  slot_data.extend_from_slice(&0u32.to_be_bytes());
+  slot_data.extend_from_slice(&content_len.to_be_bytes());
+  slot_data.extend_from_slice(&req.content.into_bytes());
+  let hash = blake3::hash(&slot_data[32..]);
+  slot_data[..32].copy_from_slice(hash.as_bytes());
+  ctx.device.write_at(slot_offset, slot_data).await;
 
-    // Populate slot.
-    let mut slot_data = vec![];
-    slot_data.extend_from_slice(&now().to_be_bytes());
-    slot_data.extend_from_slice(&0i64.to_be_bytes());
-    slot_data.extend_from_slice(&0u32.to_be_bytes());
-    slot_data.extend_from_slice(&0u64.to_be_bytes());
-    slot_data.extend_from_slice(&content_len.to_be_bytes());
-    slot_data.extend_from_slice(&req.content.into_bytes());
-    journal_writes.push((offset, slot_data));
-
-    match new_frontier {
-      Some(new_frontier) => {
-        // Update frontier.
-        journal_writes.push((STATE_OFFSETOF_FRONTIER, new_frontier.to_be_bytes().to_vec()));
-      }
-      None => {
-        // Update vacant list head.
-        journal_writes.push((
-          STATE_OFFSETOF_VACANT_HEAD,
-          slots
-            .vacant
-            .ready
-            .front()
-            .unwrap()
-            .offset
-            .to_be_bytes()
-            .to_vec(),
-        ));
-      }
-    }
-
-    // Update available list tail.
-    journal_writes.push((
-      prev_avail_offset + SLOT_OFFSETOF_NEXT,
-      offset.to_be_bytes().to_vec(),
-    ));
-
-    // Drop the lock AFTER creating the journal-write but BEFORE the future completes.
-    (offset, ctx.journal_pending.write(journal_writes))
+  // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync.
+  {
+    let mut available = ctx.available.write().await;
+    available.insert(index.try_into().unwrap(), visible_time);
   };
 
-  pending_write_future.await;
+  ctx.device.sync_all().await;
 
-  Ok(Json(EndpointPushOutput { offset }))
+  Ok(Json(EndpointPushOutput { index }))
 }

@@ -1,5 +1,3 @@
-use chrono::DateTime;
-use chrono::Utc;
 use clap::command;
 use clap::Parser;
 use futures::future::join_all;
@@ -12,9 +10,6 @@ use tokio::time::Instant;
 
 #[derive(Deserialize)]
 struct PollOutputMessage {
-  offset: u64,
-  created: DateTime<Utc>,
-  poll_count: u32,
   contents: String,
 }
 
@@ -29,7 +24,9 @@ async fn execute() -> RoaringBitmap {
   loop {
     let res = client
       .post("http://127.0.0.1:3333/poll")
-      .json(&json!({}))
+      .json(&json!({
+        "visibility_timeout_secs": 60,
+      }))
       .send()
       .await
       .unwrap()
@@ -39,7 +36,9 @@ async fn execute() -> RoaringBitmap {
       .await
       .unwrap();
     if let Some(msg) = res.message {
-      let id: u32 = msg.contents.parse().unwrap();
+      let Ok(id) = msg.contents.parse::<u32>() else {
+        panic!("failed to parse: {}", msg.contents);
+      };
       bitmap.insert(id);
     } else {
       break;

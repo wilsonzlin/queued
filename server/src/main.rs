@@ -2,100 +2,45 @@ pub mod const_;
 pub mod ctx;
 pub mod endpoint;
 pub mod file;
-pub mod journal;
-pub mod slot;
 pub mod util;
 
-use crate::const_::SLOTS_OFFSET_START;
-use crate::const_::STATE_LEN_RESERVED;
-use crate::const_::STATE_OFFSETOF_FRONTIER;
+use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
 use crate::file::SeekableAsyncFile;
-use crate::journal::clear_journal;
-use crate::journal::restore_journal;
-use crate::journal::JournalFlushing;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
+use chrono::TimeZone;
+use chrono::Utc;
 use clap::arg;
 use clap::command;
 use clap::Parser;
-use const_::SLOT_OFFSETOF_NEXT;
-use const_::STATE_OFFSETOF_AVAILABLE_HEAD;
-use const_::STATE_OFFSETOF_INVISIBLE_HEAD;
-use const_::STATE_OFFSETOF_VACANT_HEAD;
+use const_::SlotState;
+use const_::SLOT_FIXED_FIELDS_LEN;
+use const_::SLOT_LEN;
+use const_::SLOT_OFFSETOF_LEN;
+use const_::SLOT_OFFSETOF_STATE;
+use const_::SLOT_OFFSETOF_VISIBLE_TS;
+use croaring::Bitmap;
+use ctx::AvailableSlots;
 use ctx::Ctx;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
-use journal::JournalPending;
-use slot::Slot;
-use slot::SlotList;
-use slot::SlotLists;
-use std::collections::LinkedList;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::join;
 use tokio::sync::RwLock;
-
-async fn load_list_from_data(data_file: &SeekableAsyncFile, head_offset: u64) -> LinkedList<Slot> {
-  let mut list = LinkedList::new();
-  let mut offset = head_offset;
-  while offset != 0 {
-    list.push_back(Slot { offset });
-    offset = data_file.read_u64_at(offset + SLOT_OFFSETOF_NEXT).await;
-  }
-  list
-}
-
-struct LoadedData {
-  frontier: u64,
-  lists: SlotLists,
-}
-
-async fn load_data(data_file: &SeekableAsyncFile) -> LoadedData {
-  let available_head_offset = data_file.read_u64_at(STATE_OFFSETOF_AVAILABLE_HEAD).await;
-  let available_list = load_list_from_data(data_file, available_head_offset).await;
-
-  let invisible_head_offset = data_file.read_u64_at(STATE_OFFSETOF_INVISIBLE_HEAD).await;
-  let invisible_list = load_list_from_data(data_file, invisible_head_offset).await;
-
-  let vacant_head_offset = data_file.read_u64_at(STATE_OFFSETOF_VACANT_HEAD).await;
-  let vacant_list = load_list_from_data(data_file, vacant_head_offset).await;
-
-  let lists = SlotLists {
-    available: SlotList {
-      ready: available_list,
-      pending: LinkedList::new(),
-    },
-    invisible: SlotList {
-      ready: invisible_list,
-      pending: LinkedList::new(),
-    },
-    vacant: SlotList {
-      ready: vacant_list,
-      pending: LinkedList::new(),
-    },
-  };
-
-  let frontier = data_file.read_u64_at(STATE_OFFSETOF_FRONTIER).await;
-
-  LoadedData { frontier, lists }
-}
+use util::as_usize;
+use util::u64_slice;
 
 async fn start_server_loop(
-  data_fd: SeekableAsyncFile,
-  frontier: u64,
-  journal_pending: Arc<JournalPending>,
-  lists: Arc<RwLock<SlotLists>>,
+  available: RwLock<AvailableSlots>,
+  device: SeekableAsyncFile,
+  vacant: RwLock<Bitmap>,
 ) {
   let ctx = Arc::new(Ctx {
-    data_fd,
-    frontier: AtomicU64::new(frontier),
-    journal_pending,
-    lists,
+    available,
+    device,
+    vacant,
   });
 
   let app = Router::new()
@@ -111,32 +56,108 @@ async fn start_server_loop(
     .unwrap();
 }
 
-async fn format_data_file(data_file_path: &Path) {
-  let file = SeekableAsyncFile::create(data_file_path).await;
-  // WARNING: Must fill with zeros. File::set_len is guaranteed to fill with zeroes.
-  file.truncate(STATE_LEN_RESERVED).await;
+async fn format_device(dev: &SeekableAsyncFile) {
+  let mut slot_template = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
+  let hash = blake3::hash(&slot_template[32..]);
+  slot_template[..32].copy_from_slice(hash.as_bytes());
 
-  file
-    .write_at(
-      STATE_OFFSETOF_FRONTIER,
-      SLOTS_OFFSET_START.to_be_bytes().to_vec(),
-    )
-    .await;
+  let mut next = 0;
+  let end = dev.size().await;
+  while next < end {
+    dev.write_at(next, slot_template.clone()).await;
+    next += SLOT_LEN;
+  }
 
-  println!("Data file formatted");
+  dev.sync_all().await;
+
+  println!("Formatted device");
 }
 
-async fn format_journal_file(journal_file_path: &Path) {
-  let file = SeekableAsyncFile::create(journal_file_path).await;
-  clear_journal(&file).await;
-  println!("Journal file formatted");
+struct LoadedData {
+  available: AvailableSlots,
+  vacant: Bitmap,
+}
+
+async fn load_data_from_device(dev: &SeekableAsyncFile, dev_size: u64) -> LoadedData {
+  let mut available = AvailableSlots::new();
+  let mut vacant = Bitmap::create();
+
+  let mut offset = 0;
+  while offset < dev_size {
+    let mut slot_data = dev.read_at(offset, SLOT_LEN).await;
+
+    let hash_includes_contents = slot_data[as_usize!(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS)];
+    match hash_includes_contents {
+      0 => slot_data.truncate(as_usize!(SLOT_FIXED_FIELDS_LEN)),
+      1 => {
+        let content_len: u64 = u16::from_be_bytes(
+          u64_slice(&slot_data, SLOT_OFFSETOF_LEN, 2)
+            .try_into()
+            .unwrap(),
+        )
+        .into();
+        if content_len > SLOT_LEN - SLOT_FIXED_FIELDS_LEN {
+          panic!(
+            "data corruption: slot at {} contains invalid content length",
+            offset
+          );
+        }
+        slot_data.truncate(as_usize!(SLOT_FIXED_FIELDS_LEN + content_len));
+      }
+      _ => panic!(
+        "data corruption: slot at {} contains invalid content hashing indicator",
+        offset
+      ),
+    };
+
+    let expected_hash = blake3::hash(&slot_data[32..]);
+    let actual_hash = &slot_data[..32];
+    if actual_hash != expected_hash.as_bytes() {
+      panic!(
+        "data corruption: slot at {} contains hash {:x?} but data hashes to {:x?}",
+        offset,
+        actual_hash,
+        expected_hash.as_bytes()
+      );
+    }
+
+    let state = SlotState::try_from(slot_data[as_usize!(SLOT_OFFSETOF_STATE)]).unwrap();
+    let index: u32 = (offset / SLOT_LEN).try_into().unwrap();
+    match state {
+      SlotState::Available => {
+        let visible_time = Utc
+          .timestamp_millis_opt(
+            i64::from_be_bytes(
+              u64_slice(&slot_data, SLOT_OFFSETOF_VISIBLE_TS, 8)
+                .try_into()
+                .unwrap(),
+            ) * 1000,
+          )
+          .unwrap();
+        available.insert(index, visible_time);
+      }
+      SlotState::Vacant => {
+        if !vacant.add_checked(index) {
+          panic!("slot already exists");
+        }
+      }
+    };
+
+    offset += SLOT_LEN;
+  }
+
+  println!("Verified and loaded data on device");
+  println!("Vacant slots: {}", vacant.cardinality());
+  println!("Available slots: {}", available.len());
+  println!("Total device slots: {}", dev_size / SLOT_LEN);
+  LoadedData { available, vacant }
 }
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
   #[arg(long)]
-  datadir: PathBuf,
+  device: PathBuf,
 
   #[arg(long)]
   format: bool,
@@ -146,40 +167,18 @@ struct Cli {
 async fn main() {
   let cli = Cli::parse();
 
-  let data_file_path = cli.datadir.join("data");
-  let journal_file_path = cli.datadir.join("journal");
+  let mut device = SeekableAsyncFile::open(&cli.device).await;
+
+  let device_size = device.size().await;
+  if device_size % SLOT_LEN != 0 {
+    panic!("device must be an exact multiple of {} bytes", SLOT_LEN);
+  };
 
   if cli.format {
-    format_data_file(&data_file_path).await;
-    format_journal_file(&journal_file_path).await;
+    format_device(&mut device).await;
   }
 
-  restore_journal(
-    &SeekableAsyncFile::open(&data_file_path).await,
-    &SeekableAsyncFile::open(&journal_file_path).await,
-  )
-  .await;
+  let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;
 
-  let LoadedData { frontier, lists } =
-    load_data(&SeekableAsyncFile::open(&data_file_path).await).await;
-  let lists = Arc::new(RwLock::new(lists));
-
-  let journal_pending = Arc::new(JournalPending::new());
-
-  let journal_flushing = JournalFlushing::new(
-    SeekableAsyncFile::open(&data_file_path).await,
-    SeekableAsyncFile::open(&journal_file_path).await,
-    lists.clone(),
-    journal_pending.clone(),
-  );
-
-  join!(
-    journal_flushing.start_flush_loop(Duration::from_millis(1)),
-    start_server_loop(
-      SeekableAsyncFile::open(&data_file_path).await,
-      frontier,
-      journal_pending.clone(),
-      lists.clone(),
-    ),
-  );
+  start_server_loop(RwLock::new(available), device, RwLock::new(vacant)).await;
 }

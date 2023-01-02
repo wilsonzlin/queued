@@ -15,6 +15,7 @@ async fn execute(start: u32, end: u32) -> () {
       .post("http://127.0.0.1:3333/push")
       .json(&json!({
         "content": id.to_string(),
+        "visibility_timeout_secs": 0,
       }))
       .send()
       .await

@@ -30,6 +30,13 @@ impl SeekableAsyncFile {
     SeekableAsyncFile(Arc::new(fd))
   }
 
+  pub async fn size(&self) -> u64 {
+    let fd = self.0.clone();
+    spawn_blocking(move || fd.metadata().unwrap().len())
+      .await
+      .unwrap()
+  }
+
   pub fn cursor(&self, pos: u64) -> SeekableAsyncFileCursor {
     SeekableAsyncFileCursor {
       fd: self.clone(),
