@@ -1,5 +1,3 @@
-#![feature(int_roundings)]
-
 use clap::command;
 use clap::Parser;
 use futures::future::join_all;
@@ -54,13 +52,21 @@ struct Cli {
   count: u32,
 }
 
+// https://stackoverflow.com/a/72442854/6249022
+fn div_ceil(a: u32, b: u32) -> u32 {
+  // This only works if addition doesn't overflow, so let's upsize to u64 to ensure this.
+  let a: u64 = a.into();
+  let b: u64 = b.into();
+  ((a + b - 1) / b).try_into().unwrap()
+}
+
 #[tokio::main]
 async fn main() {
   let args = Cli::parse();
   let started = Instant::now();
   let mut tasks = Vec::with_capacity(args.concurrency.try_into().unwrap());
   let connection_error_counter = Arc::new(AtomicU64::new(0));
-  let count_per_concurrency = args.count.div_ceil(args.concurrency);
+  let count_per_concurrency = div_ceil(args.count, args.concurrency);
   for c in 0..args.concurrency {
     let first = c * count_per_concurrency;
     let last = min(args.count, (c + 1) * count_per_concurrency);
