@@ -103,3 +103,4 @@ Set a property to `true` to disable that endpoint, and `false` to re-enable it. 
 - If you require more than one queue (e.g. channels), run multiple servers.
 - Messages are limited to 1 KiB, including metadata. This will be adjustable at format time in the future.
 - The server is limited to up to 2<sup>32</sup> (around 4 billion) messages at any time. This is currently a simplification optimisation, and may be adjusted in the future.
+- Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.

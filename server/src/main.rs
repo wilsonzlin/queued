@@ -38,6 +38,7 @@ use endpoint::suspend::endpoint_get_suspend;
 use endpoint::suspend::endpoint_post_suspend;
 use std::cmp::min;
 use std::fs::File;
+use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
@@ -49,6 +50,8 @@ use util::as_usize;
 use util::u64_slice;
 
 async fn start_server_loop(
+  interface: Ipv4Addr,
+  port: u16,
   available: RwLock<AvailableSlots>,
   device: SeekableAsyncFile,
   vacant: RwLock<Bitmap>,
@@ -72,7 +75,7 @@ async fn start_server_loop(
     )
     .with_state(ctx.clone());
 
-  let addr = SocketAddr::from(([0, 0, 0, 0], 3333));
+  let addr = SocketAddr::from((interface, port));
 
   Server::bind(&addr)
     .serve(app.into_make_service())
@@ -199,6 +202,14 @@ struct Cli {
   /// Format the device or file. WARNING: All existing data will be erased.
   #[arg(long)]
   format: bool,
+
+  /// Interface for server to listen on. Defaults to 127.0.0.1.
+  #[arg(long, default_value = "127.0.0.1")]
+  interface: Ipv4Addr,
+
+  /// Port for server to listen on. Defaults to 3333.
+  #[arg(long, default_value_t = 3333)]
+  port: u16,
 }
 
 #[tokio::main]
@@ -226,7 +237,13 @@ async fn main() {
 
   let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;
 
-  let server_fut = start_server_loop(RwLock::new(available), device.clone(), RwLock::new(vacant));
+  let server_fut = start_server_loop(
+    cli.interface,
+    cli.port,
+    RwLock::new(available),
+    device.clone(),
+    RwLock::new(vacant),
+  );
 
   #[cfg(feature = "fsync_delayed")]
   join! {
