@@ -20,12 +20,13 @@ struct PollOutput {
   message: Option<PollOutputMessage>,
 }
 
-async fn execute() -> RoaringBitmap {
+async fn execute(hostname: &str) -> RoaringBitmap {
   let mut bitmap = RoaringBitmap::new();
   let client = reqwest::Client::new();
+  let url = format!("http://{}:3333/poll", hostname);
   loop {
     let res = client
-      .post("http://127.0.0.1:3333/poll")
+      .post(&url)
       .json(&json!({
         "visibility_timeout_secs": 60,
       }))
@@ -64,6 +65,9 @@ async fn execute() -> RoaringBitmap {
 #[command(author, about)]
 struct Cli {
   #[arg(long)]
+  hostname: String,
+
+  #[arg(long)]
   concurrency: u32,
 
   #[arg(long)]
@@ -98,7 +102,7 @@ async fn main() {
   let started = Instant::now();
   let mut tasks = Vec::with_capacity(args.concurrency.try_into().unwrap());
   for _ in 0..args.concurrency {
-    tasks.push(execute());
+    tasks.push(execute(&args.hostname));
   }
   let polled_ids = join_all(tasks).await;
   let exec_dur = started.elapsed();

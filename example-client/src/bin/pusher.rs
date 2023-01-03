@@ -8,11 +8,12 @@ use serde_json::Value;
 use std::cmp::min;
 use tokio::time::Instant;
 
-async fn execute(start: u32, end: u32) -> () {
+async fn execute(hostname: &str, start: u32, end: u32) -> () {
   let client = reqwest::Client::new();
+  let url = format!("http://{}:3333/push", hostname);
   for id in start..end {
     client
-      .post("http://127.0.0.1:3333/push")
+      .post(&url)
       .json(&json!({
         "content": id.to_string(),
         "visibility_timeout_secs": 0,
@@ -32,6 +33,9 @@ async fn execute(start: u32, end: u32) -> () {
 #[command(author, about)]
 struct Cli {
   #[arg(long)]
+  hostname: String,
+
+  #[arg(long)]
   concurrency: u32,
 
   #[arg(long)]
@@ -47,7 +51,7 @@ async fn main() {
   for c in 0..args.concurrency {
     let first = c * count_per_concurrency;
     let last = min(args.count, (c + 1) * count_per_concurrency);
-    tasks.push(execute(first, last));
+    tasks.push(execute(&args.hostname, first, last));
   }
   join_all(tasks).await;
   let exec_dur = started.elapsed();
