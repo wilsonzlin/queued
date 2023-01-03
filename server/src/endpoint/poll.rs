@@ -50,6 +50,13 @@ pub async fn endpoint_poll(
   State(ctx): State<Arc<Ctx>>,
   Json(req): Json<EndpointPollInput>,
 ) -> Result<Json<EndpointPollOutput>, (StatusCode, &'static str)> {
+  if ctx.suspend_poll.load(std::sync::atomic::Ordering::Relaxed) {
+    return Err((
+      StatusCode::SERVICE_UNAVAILABLE,
+      "this endpoint has been suspended",
+    ));
+  };
+
   let poll_time = Utc::now();
 
   let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);

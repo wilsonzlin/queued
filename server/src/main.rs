@@ -13,6 +13,7 @@ use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::file::SeekableAsyncFile;
 use crate::util::get_device_size;
 use crate::util::repeated_copy;
+use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -33,11 +34,14 @@ use ctx::Ctx;
 use endpoint::delete::endpoint_delete;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
+use endpoint::suspend::endpoint_get_suspend;
+use endpoint::suspend::endpoint_post_suspend;
 use std::cmp::min;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::RwLock;
@@ -52,6 +56,9 @@ async fn start_server_loop(
   let ctx = Arc::new(Ctx {
     available,
     device,
+    suspend_delete: AtomicBool::new(false),
+    suspend_poll: AtomicBool::new(false),
+    suspend_push: AtomicBool::new(false),
     vacant,
   });
 
@@ -59,6 +66,10 @@ async fn start_server_loop(
     .route("/delete", post(endpoint_delete))
     .route("/poll", post(endpoint_poll))
     .route("/push", post(endpoint_push))
+    .route(
+      "/suspend",
+      get(endpoint_get_suspend).post(endpoint_post_suspend),
+    )
     .with_state(ctx.clone());
 
   let addr = SocketAddr::from(([0, 0, 0, 0], 3333));

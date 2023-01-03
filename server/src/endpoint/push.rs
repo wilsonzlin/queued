@@ -27,6 +27,13 @@ pub async fn endpoint_push(
   State(ctx): State<Arc<Ctx>>,
   Json(req): Json<EndpointPushInput>,
 ) -> Result<Json<EndpointPushOutput>, (StatusCode, &'static str)> {
+  if ctx.suspend_push.load(std::sync::atomic::Ordering::Relaxed) {
+    return Err((
+      StatusCode::SERVICE_UNAVAILABLE,
+      "this endpoint has been suspended",
+    ));
+  };
+
   if req.content.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
     return Err((StatusCode::PAYLOAD_TOO_LARGE, "content is too large"));
   };

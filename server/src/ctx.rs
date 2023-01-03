@@ -5,6 +5,7 @@ use croaring::Bitmap;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::atomic::AtomicBool;
 use tokio::sync::RwLock;
 
 pub struct AvailableSlot {
@@ -98,4 +99,7 @@ pub struct Ctx {
   pub available: RwLock<AvailableSlots>,
   pub device: SeekableAsyncFile,
   pub vacant: RwLock<Bitmap>,
+  pub suspend_push: AtomicBool,
+  pub suspend_poll: AtomicBool,
+  pub suspend_delete: AtomicBool,
 }

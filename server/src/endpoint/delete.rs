@@ -22,6 +22,16 @@ pub async fn endpoint_delete(
   State(ctx): State<Arc<Ctx>>,
   Json(req): Json<EndpointDeleteInput>,
 ) -> Result<Json<EndpointDeleteOutput>, (StatusCode, &'static str)> {
+  if ctx
+    .suspend_delete
+    .load(std::sync::atomic::Ordering::Relaxed)
+  {
+    return Err((
+      StatusCode::SERVICE_UNAVAILABLE,
+      "this endpoint has been suspended",
+    ));
+  };
+
   let slot_offset = u64::from(req.index) * SLOT_LEN;
 
   let Ok(req_poll_tag) = hex::decode(req.poll_tag) else {
