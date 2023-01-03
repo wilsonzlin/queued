@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::cmp::min;
 use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs::File;
@@ -41,4 +42,15 @@ pub async fn get_device_size(path: &Path) -> u64 {
   let mut file = File::open(path).await.unwrap();
   // Note that `file.metadata().len()` is 0 for device files.
   file.seek(SeekFrom::End(0)).await.unwrap()
+}
+
+pub fn repeated_copy<T: Copy>(dest: &mut [T], src: &[T]) {
+  dest[..src.len()].copy_from_slice(src);
+
+  let mut next = 0;
+  while next < dest.len() {
+    let end = min(next * 2, dest.len());
+    dest[next..end].copy_within(..end - next, next);
+    next = end;
+  }
 }

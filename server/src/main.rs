@@ -12,6 +12,7 @@ use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
 use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::file::SeekableAsyncFile;
 use crate::util::get_device_size;
+use crate::util::repeated_copy;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -32,7 +33,10 @@ use ctx::Ctx;
 use endpoint::delete::endpoint_delete;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
+use std::cmp::min;
+use std::fs::File;
 use std::net::SocketAddr;
+use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::join;
@@ -65,15 +69,24 @@ async fn start_server_loop(
     .unwrap();
 }
 
-async fn format_device(dev: &SeekableAsyncFile, dev_size: u64) {
+// For performance, as we're writing huge chunks, this is synchronous.
+fn format_device(dev: &mut File, dev_size: u64) {
+  let mut template = vec![0u8; min(as_usize!(dev_size), 1024 * 1024 * 1024)];
+  repeated_copy(&mut template, &SLOT_VACANT_TEMPLATE);
+  let template_len: u64 = template.len().try_into().unwrap();
+
   let mut next = 0;
-  let end = dev_size;
-  while next < end {
-    dev.write_at(next, SLOT_VACANT_TEMPLATE.clone()).await;
-    next += SLOT_LEN;
+  while next < dev_size {
+    dev
+      .write_all_at(
+        &template[..min(template.len(), as_usize!(dev_size - next))],
+        next,
+      )
+      .unwrap();
+    next += template_len;
   }
 
-  dev.sync_all().await;
+  dev.sync_all().unwrap();
 
   println!("Formatted device");
 }
@@ -172,7 +185,7 @@ struct Cli {
 async fn main() {
   let cli = Cli::parse();
 
-  let mut device = SeekableAsyncFile::open(&cli.device).await;
+  let device = SeekableAsyncFile::open(&cli.device).await;
 
   let device_size = get_device_size(&cli.device).await;
   if device_size % SLOT_LEN != 0 {
@@ -180,7 +193,10 @@ async fn main() {
   };
 
   if cli.format {
-    format_device(&mut device, device_size).await;
+    format_device(
+      &mut File::options().write(true).open(&cli.device).unwrap(),
+      device_size,
+    );
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
   }
