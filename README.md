@@ -81,7 +81,20 @@ Performing backups can be done by stopping the process and taking a copy of the 
 
 ## Management
 
-`GET /metrics` returns metrics in the Prometheus format.
+`GET /metrics` returns metrics in the Prometheus format:
+
+```
+queued_available_gauge 0 1672744275921
+queued_empty_poll_counter 2048 1672744275921
+queued_missing_delete_counter 0 1672744275921
+queued_successful_delete_counter 1000000 1672744275921
+queued_successful_poll_counter 1000000 1672744275921
+queued_successful_push_counter 1000000 1672744275921
+queued_suspended_delete_counter 0 1672744275921
+queued_suspended_poll_counter 0 1672744275921
+queued_suspended_push_counter 0 1672744275921
+queued_vacant_gauge 1000000 1672744275921
+```
 
 `GET /healthz` returns the current build version.
 
