@@ -10,6 +10,7 @@ use chrono::Duration;
 use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -28,6 +29,10 @@ pub async fn endpoint_push(
   Json(req): Json<EndpointPushInput>,
 ) -> Result<Json<EndpointPushOutput>, (StatusCode, &'static str)> {
   if ctx.suspend_push.load(std::sync::atomic::Ordering::Relaxed) {
+    ctx
+      .metrics
+      .suspended_push_counter
+      .fetch_add(1, Ordering::Relaxed);
     return Err((
       StatusCode::SERVICE_UNAVAILABLE,
       "this endpoint has been suspended",
@@ -45,11 +50,10 @@ pub async fn endpoint_push(
   let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
   let index = {
-    let mut vacant = ctx.vacant.write().await;
-    let Some(index) = vacant.minimum() else {
+    let mut vacant = ctx.vacant.lock().await;
+    let Some(index) = vacant.take() else {
       return Err((StatusCode::INSUFFICIENT_STORAGE, "queue is currently full"));
     };
-    vacant.remove(index);
     index
   };
   let slot_offset = u64::from(index) * SLOT_LEN;
@@ -76,9 +80,13 @@ pub async fn endpoint_push(
 
   // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync. This also prevents a poller to mangle our write when they update the slot data.
   {
-    let mut available = ctx.available.write().await;
+    let mut available = ctx.available.lock().await;
     available.insert(index, visible_time);
   };
 
+  ctx
+    .metrics
+    .successful_push_counter
+    .fetch_add(1, Ordering::Relaxed);
   Ok(Json(EndpointPushOutput { index }))
 }

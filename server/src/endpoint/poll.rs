@@ -25,6 +25,7 @@ use rand::thread_rng;
 use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -51,6 +52,10 @@ pub async fn endpoint_poll(
   Json(req): Json<EndpointPollInput>,
 ) -> Result<Json<EndpointPollOutput>, (StatusCode, &'static str)> {
   if ctx.suspend_poll.load(std::sync::atomic::Ordering::Relaxed) {
+    ctx
+      .metrics
+      .suspended_poll_counter
+      .fetch_add(1, Ordering::Relaxed);
     return Err((
       StatusCode::SERVICE_UNAVAILABLE,
       "this endpoint has been suspended",
@@ -62,9 +67,10 @@ pub async fn endpoint_poll(
   let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);
 
   let index = {
-    let mut available = ctx.available.write().await;
+    let mut available = ctx.available.lock().await;
     // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
     let Some(index) = available.remove_earliest_up_to(&poll_time) else {
+      ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
       return Ok(Json(EndpointPollOutput { message: None }));
     };
     index
@@ -125,10 +131,14 @@ pub async fn endpoint_poll(
     .await;
 
   {
-    let mut available = ctx.available.write().await;
+    let mut available = ctx.available.lock().await;
     available.insert(index, visible_time);
   };
 
+  ctx
+    .metrics
+    .successful_poll_counter
+    .fetch_add(1, Ordering::Relaxed);
   Ok(Json(EndpointPollOutput {
     message: Some(EndpointPollOutputMessage {
       contents,

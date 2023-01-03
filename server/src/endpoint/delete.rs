@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde::Serialize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
@@ -22,10 +23,11 @@ pub async fn endpoint_delete(
   State(ctx): State<Arc<Ctx>>,
   Json(req): Json<EndpointDeleteInput>,
 ) -> Result<Json<EndpointDeleteOutput>, (StatusCode, &'static str)> {
-  if ctx
-    .suspend_delete
-    .load(std::sync::atomic::Ordering::Relaxed)
-  {
+  if ctx.suspend_delete.load(Ordering::Relaxed) {
+    ctx
+      .metrics
+      .suspended_delete_counter
+      .fetch_add(1, Ordering::Relaxed);
     return Err((
       StatusCode::SERVICE_UNAVAILABLE,
       "this endpoint has been suspended",
@@ -43,8 +45,12 @@ pub async fn endpoint_delete(
 
   // We use double-checked locking to avoid an expensive I/O read of the poll tag.
   {
-    let available = ctx.available.read().await;
+    let available = ctx.available.lock().await;
     if !available.has(req.index) {
+      ctx
+        .metrics
+        .missing_delete_counter
+        .fetch_add(1, Ordering::Relaxed);
       return Err((StatusCode::NOT_FOUND, "message not found"));
     };
   };
@@ -55,12 +61,17 @@ pub async fn endpoint_delete(
     .read_at(slot_offset + SLOT_OFFSETOF_POLL_TAG, 30)
     .await;
   if slot_poll_tag != req_poll_tag {
-    return Err((StatusCode::BAD_REQUEST, "invalid poll tag"));
+    ctx
+      .metrics
+      .missing_delete_counter
+      .fetch_add(1, Ordering::Relaxed);
+    return Err((StatusCode::NOT_FOUND, "invalid poll tag"));
   };
 
   {
-    let mut available = ctx.available.write().await;
+    let mut available = ctx.available.lock().await;
     let Some(()) = available.remove(req.index) else {
+      ctx.metrics.missing_delete_counter.fetch_add(1, Ordering::Relaxed);
       // Someone else beat us to it.
       return Err((StatusCode::NOT_FOUND, "message not found"));
     };
@@ -72,11 +83,13 @@ pub async fn endpoint_delete(
     .await;
 
   {
-    let mut vacant = ctx.vacant.write().await;
-    if !vacant.add_checked(req.index) {
-      panic!("slot already exists");
-    };
+    let mut vacant = ctx.vacant.lock().await;
+    vacant.add(req.index);
   };
 
+  ctx
+    .metrics
+    .successful_delete_counter
+    .fetch_add(1, Ordering::Relaxed);
   Ok(Json(EndpointDeleteOutput {}))
 }

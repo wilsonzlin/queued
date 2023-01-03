@@ -28,11 +28,13 @@ use const_::SLOT_LEN;
 use const_::SLOT_OFFSETOF_LEN;
 use const_::SLOT_OFFSETOF_STATE;
 use const_::SLOT_OFFSETOF_VISIBLE_TS;
-use croaring::Bitmap;
 use ctx::AvailableSlots;
 use ctx::Ctx;
+use ctx::Metrics;
+use ctx::VacantSlots;
 use endpoint::delete::endpoint_delete;
 use endpoint::healthz::endpoint_healthz;
+use endpoint::metrics::endpoint_metrics;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use endpoint::suspend::endpoint_get_suspend;
@@ -44,22 +46,25 @@ use std::net::SocketAddr;
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::join;
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 use util::as_usize;
 use util::u64_slice;
 
 async fn start_server_loop(
   interface: Ipv4Addr,
   port: u16,
-  available: RwLock<AvailableSlots>,
+  available: Mutex<AvailableSlots>,
   device: SeekableAsyncFile,
-  vacant: RwLock<Bitmap>,
+  metrics: Metrics,
+  vacant: Mutex<VacantSlots>,
 ) {
   let ctx = Arc::new(Ctx {
     available,
     device,
+    metrics,
     suspend_delete: AtomicBool::new(false),
     suspend_poll: AtomicBool::new(false),
     suspend_push: AtomicBool::new(false),
@@ -69,6 +74,7 @@ async fn start_server_loop(
   let app = Router::new()
     .route("/delete", post(endpoint_delete))
     .route("/healthz", get(endpoint_healthz))
+    .route("/metrics", get(endpoint_metrics))
     .route("/poll", post(endpoint_poll))
     .route("/push", post(endpoint_push))
     .route(
@@ -112,12 +118,17 @@ fn format_device(dev: &mut File, dev_size: u64) {
 
 struct LoadedData {
   available: AvailableSlots,
-  vacant: Bitmap,
+  vacant: VacantSlots,
 }
 
-async fn load_data_from_device(dev: &SeekableAsyncFile, dev_size: u64) -> LoadedData {
-  let mut available = AvailableSlots::new();
-  let mut vacant = Bitmap::create();
+async fn load_data_from_device(
+  available_gauge: Arc<AtomicU64>,
+  vacant_gauge: Arc<AtomicU64>,
+  dev: &SeekableAsyncFile,
+  dev_size: u64,
+) -> LoadedData {
+  let mut available = AvailableSlots::new(available_gauge);
+  let mut vacant = VacantSlots::new(vacant_gauge);
 
   let mut offset = 0;
   while offset < dev_size {
@@ -174,9 +185,7 @@ async fn load_data_from_device(dev: &SeekableAsyncFile, dev_size: u64) -> Loaded
         available.insert(index, visible_time);
       }
       SlotState::Vacant => {
-        if !vacant.add_checked(index) {
-          panic!("slot already exists");
-        }
+        vacant.add(index);
       }
     };
 
@@ -184,7 +193,7 @@ async fn load_data_from_device(dev: &SeekableAsyncFile, dev_size: u64) -> Loaded
   }
 
   println!("Verified and loaded data on device");
-  println!("Vacant slots: {}", vacant.cardinality());
+  println!("Vacant slots: {}", vacant.count());
   println!("Available slots: {}", available.len());
   println!("Total device slots: {}", dev_size / SLOT_LEN);
   LoadedData { available, vacant }
@@ -237,14 +246,23 @@ async fn main() {
     return;
   }
 
-  let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;
+  let metrics = Metrics::default();
+
+  let LoadedData { available, vacant } = load_data_from_device(
+    metrics.available_gauge.clone(),
+    metrics.vacant_gauge.clone(),
+    &device,
+    device_size,
+  )
+  .await;
 
   let server_fut = start_server_loop(
     cli.interface,
     cli.port,
-    RwLock::new(available),
+    Mutex::new(available),
     device.clone(),
-    RwLock::new(vacant),
+    metrics,
+    Mutex::new(vacant),
   );
 
   #[cfg(feature = "fsync_delayed")]
