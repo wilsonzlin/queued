@@ -177,9 +177,15 @@ async fn load_data_from_device(dev: &SeekableAsyncFile, dev_size: u64) -> Loaded
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
+  /// Path to the device or file to use as persistent storage.
   #[arg(long)]
   device: PathBuf,
 
+  /// Optional override of amount of storage to use. Note that once provided, all future invocations must consistently provide the same value for integrity; this value is not recorded anywhere.
+  #[arg(long)]
+  device_size: Option<u64>,
+
+  /// Format the device or file. WARNING: All existing data will be erased.
   #[arg(long)]
   format: bool,
 }
@@ -190,7 +196,10 @@ async fn main() {
 
   let device = SeekableAsyncFile::open(&cli.device).await;
 
-  let device_size = get_device_size(&cli.device).await;
+  let device_size = match cli.device_size {
+    Some(s) => s,
+    None => get_device_size(&cli.device).await,
+  };
   if device_size % SLOT_LEN != 0 {
     panic!("device must be an exact multiple of {} bytes", SLOT_LEN);
   };
