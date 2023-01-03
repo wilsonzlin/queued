@@ -22,11 +22,16 @@ struct PollOutput {
   message: Option<PollOutputMessage>,
 }
 
-async fn execute(hostname: &str, conn_err_cnt: Arc<AtomicU64>) -> RoaringBitmap {
+async fn execute(
+  hostname: &str,
+  connect_timeout: u64,
+  request_timeout: u64,
+  conn_err_cnt: Arc<AtomicU64>,
+) -> RoaringBitmap {
   let mut bitmap = RoaringBitmap::new();
   let client = reqwest::Client::builder()
-    .connect_timeout(std::time::Duration::from_secs(3))
-    .timeout(std::time::Duration::from_secs(6))
+    .connect_timeout(std::time::Duration::from_secs(connect_timeout))
+    .timeout(std::time::Duration::from_secs(request_timeout))
     .build()
     .unwrap();
   let url = format!("http://{}:3333/poll", hostname);
@@ -77,6 +82,12 @@ struct Cli {
   hostname: String,
 
   #[arg(long)]
+  connect_timeout_secs: u64,
+
+  #[arg(long)]
+  request_timeout_secs: u64,
+
+  #[arg(long)]
   concurrency: u32,
 
   #[arg(long)]
@@ -112,7 +123,12 @@ async fn main() {
   let mut tasks = Vec::with_capacity(args.concurrency.try_into().unwrap());
   let connection_error_counter = Arc::new(AtomicU64::new(0));
   for _ in 0..args.concurrency {
-    tasks.push(execute(&args.hostname, connection_error_counter.clone()));
+    tasks.push(execute(
+      &args.hostname,
+      args.connect_timeout_secs,
+      args.request_timeout_secs,
+      connection_error_counter.clone(),
+    ));
   }
   let polled_ids = join_all(tasks).await;
   let exec_dur = started.elapsed();

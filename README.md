@@ -68,7 +68,7 @@ queued --device /dev/my_block_device
 
 ## Performance
 
-queued scales well with more threads.
+On a machine with an Intel Core i5-12400 CPU, Samsung 970 EVO Plus 1TB NVMe SSD, and Linux 5.17, with 2048 concurrent clients, queued manages around 50,000 operations (push, poll, or delete) per second.
 
 ## Safety
 

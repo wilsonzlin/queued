@@ -8,10 +8,17 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::time::Instant;
 
-async fn execute(hostname: &str, start: u32, end: u32, conn_err_cnt: Arc<AtomicU64>) -> () {
+async fn execute(
+  hostname: &str,
+  connect_timeout: u64,
+  request_timeout: u64,
+  start: u32,
+  end: u32,
+  conn_err_cnt: Arc<AtomicU64>,
+) -> () {
   let client = reqwest::Client::builder()
-    .connect_timeout(std::time::Duration::from_secs(3))
-    .timeout(std::time::Duration::from_secs(6))
+    .connect_timeout(std::time::Duration::from_secs(connect_timeout))
+    .timeout(std::time::Duration::from_secs(request_timeout))
     .build()
     .unwrap();
   let url = format!("http://{}:3333/push", hostname);
@@ -46,6 +53,12 @@ struct Cli {
   hostname: String,
 
   #[arg(long)]
+  connect_timeout_secs: u64,
+
+  #[arg(long)]
+  request_timeout_secs: u64,
+
+  #[arg(long)]
   concurrency: u32,
 
   #[arg(long)]
@@ -60,6 +73,30 @@ fn div_ceil(a: u32, b: u32) -> u32 {
   ((a + b - 1) / b).try_into().unwrap()
 }
 
+#[cfg(test)]
+mod tests {
+  use crate::div_ceil;
+
+  #[test]
+  fn test_div_ceil() {
+    assert_eq!(div_ceil(0, 1), 0);
+    assert_eq!(div_ceil(0, 2), 0);
+    assert_eq!(div_ceil(0, 3), 0);
+    assert_eq!(div_ceil(1, 1), 1);
+    assert_eq!(div_ceil(1, 2), 1);
+    assert_eq!(div_ceil(1, 3), 1);
+    assert_eq!(div_ceil(2, 2), 1);
+    assert_eq!(div_ceil(2, 3), 1);
+    assert_eq!(div_ceil(3, 4), 1);
+    assert_eq!(div_ceil(4, 3), 2);
+    assert_eq!(div_ceil(5, 3), 2);
+    assert_eq!(div_ceil(5, 4), 2);
+    assert_eq!(div_ceil(5, 5), 1);
+    assert_eq!(div_ceil(5, 6), 1);
+    assert_eq!(div_ceil(6, 5), 2);
+  }
+}
+
 #[tokio::main]
 async fn main() {
   let args = Cli::parse();
@@ -72,6 +109,8 @@ async fn main() {
     let last = min(args.count, (c + 1) * count_per_concurrency);
     tasks.push(execute(
       &args.hostname,
+      args.connect_timeout_secs,
+      args.request_timeout_secs,
       first,
       last,
       connection_error_counter.clone(),
