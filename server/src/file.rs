@@ -83,13 +83,6 @@ impl SeekableAsyncFile {
     SeekableAsyncFile::from_fd(fd)
   }
 
-  pub async fn size(&self) -> u64 {
-    let fd = self.fd.clone();
-    spawn_blocking(move || fd.metadata().unwrap().len())
-      .await
-      .unwrap()
-  }
-
   // Since spawn_blocking requires 'static lifetime, we don't have a read_into_at function taht takes a &mut [u8] buffer, as it would be more like a Arc<Mutex<Vec<u8>>>, at which point the overhead is not really worth it for small reads.
   pub async fn read_at(&self, offset: u64, len: u64) -> Vec<u8> {
     let fd = self.fd.clone();

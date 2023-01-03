@@ -11,6 +11,7 @@ pub mod util;
 use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
 use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::file::SeekableAsyncFile;
+use crate::util::get_device_size;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
@@ -64,9 +65,9 @@ async fn start_server_loop(
     .unwrap();
 }
 
-async fn format_device(dev: &SeekableAsyncFile) {
+async fn format_device(dev: &SeekableAsyncFile, dev_size: u64) {
   let mut next = 0;
-  let end = dev.size().await;
+  let end = dev_size;
   while next < end {
     dev.write_at(next, SLOT_VACANT_TEMPLATE.clone()).await;
     next += SLOT_LEN;
@@ -173,13 +174,13 @@ async fn main() {
 
   let mut device = SeekableAsyncFile::open(&cli.device).await;
 
-  let device_size = device.size().await;
+  let device_size = get_device_size(&cli.device).await;
   if device_size % SLOT_LEN != 0 {
     panic!("device must be an exact multiple of {} bytes", SLOT_LEN);
   };
 
   if cli.format {
-    format_device(&mut device).await;
+    format_device(&mut device, device_size).await;
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
   }

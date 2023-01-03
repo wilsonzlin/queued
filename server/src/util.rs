@@ -1,4 +1,8 @@
 use chrono::Utc;
+use std::io::SeekFrom;
+use std::path::Path;
+use tokio::fs::File;
+use tokio::io::AsyncSeekExt;
 
 // Use this over `as usize` for safety without verbosity of `.try_into::<usize>().unwrap()`.
 macro_rules! as_usize {
@@ -31,4 +35,10 @@ pub fn u64_len<T>(slice: &[T]) -> u64 {
 
 pub fn now() -> i64 {
   Utc::now().timestamp()
+}
+
+pub async fn get_device_size(path: &Path) -> u64 {
+  let mut file = File::open(path).await.unwrap();
+  // Note that `file.metadata().len()` is 0 for device files.
+  file.seek(SeekFrom::End(0)).await.unwrap()
 }
