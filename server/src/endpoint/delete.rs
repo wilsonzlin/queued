@@ -58,9 +58,8 @@ pub async fn endpoint_delete(
 
   ctx
     .device
-    .write_at(slot_offset, SLOT_VACANT_TEMPLATE.clone())
+    .write_at_with_delayed_sync(slot_offset, SLOT_VACANT_TEMPLATE.clone())
     .await;
-  ctx.device.sync_data_delayed().await;
 
   {
     let mut vacant = ctx.vacant.write().await;

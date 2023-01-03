@@ -114,23 +114,25 @@ impl SeekableAsyncFile {
 
   pub async fn write_at(&self, offset: u64, data: Vec<u8>) {
     let fd = self.fd.clone();
-    let len = data.len();
     spawn_blocking(move || fd.write_all_at(&data, offset).unwrap())
       .await
       .unwrap();
-    {
-      let mut state = self.pending_sync_state.lock().await;
-      state.unsynced_bytes += len;
-    };
   }
 
   #[cfg(feature = "fsync_delayed")]
-  async fn maybe_perform_delayed_data_sync_now(&self, keep_waiting: bool) {
+  async fn maybe_perform_delayed_data_sync_now(
+    &self,
+    increment_unsynced_bytes: usize,
+    keep_waiting: bool,
+  ) {
     let (fut_states, created_fut) = {
       let mut state = self.pending_sync_state.lock().await;
+      state.unsynced_bytes += increment_unsynced_bytes;
+
       let has_pending_futs = !state.pending_sync_fut_states.is_empty();
       let met_bytes_threshold = state.unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
       let met_deadline = state.unsynced_since.elapsed().as_micros() >= u128::from(DELAYED_SYNC_US);
+
       if has_pending_futs && (met_bytes_threshold || met_deadline) {
         state.unsynced_bytes = 0;
         state.unsynced_since = Instant::now();
@@ -171,8 +173,10 @@ impl SeekableAsyncFile {
   }
 
   #[cfg(feature = "fsync_delayed")]
-  pub async fn sync_data_delayed(&self) {
-    self.maybe_perform_delayed_data_sync_now(true).await;
+  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
+    let len = data.len();
+    self.write_at(offset, data).await;
+    self.maybe_perform_delayed_data_sync_now(len, true).await;
   }
 
   #[cfg(feature = "fsync_immediate")]
@@ -187,7 +191,7 @@ impl SeekableAsyncFile {
   pub async fn start_delayed_data_sync_background_loop(&self) {
     loop {
       sleep(std::time::Duration::from_micros(DELAYED_SYNC_US)).await;
-      self.maybe_perform_delayed_data_sync_now(false).await;
+      self.maybe_perform_delayed_data_sync_now(0, false).await;
     }
   }
 

@@ -112,8 +112,10 @@ pub async fn endpoint_poll(
   );
   let hash = blake3::hash(&slot_data[32..]);
   u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
-  ctx.device.write_at(slot_offset, slot_data).await;
-  ctx.device.sync_data_delayed().await;
+  ctx
+    .device
+    .write_at_with_delayed_sync(slot_offset, slot_data)
+    .await;
 
   {
     let mut available = ctx.available.write().await;

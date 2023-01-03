@@ -180,6 +180,8 @@ async fn main() {
 
   if cli.format {
     format_device(&mut device).await;
+    // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
+    return;
   }
 
   let LoadedData { available, vacant } = load_data_from_device(&device, device_size).await;

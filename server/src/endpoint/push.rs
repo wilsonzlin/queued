@@ -62,8 +62,10 @@ pub async fn endpoint_push(
   slot_data.extend_from_slice(&req.content.into_bytes());
   let hash = blake3::hash(&slot_data[32..]);
   slot_data[..32].copy_from_slice(hash.as_bytes());
-  ctx.device.write_at(slot_offset, slot_data).await;
-  ctx.device.sync_data_delayed().await;
+  ctx
+    .device
+    .write_at_with_delayed_sync(slot_offset, slot_data)
+    .await;
 
   // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync. This also prevents a poller to mangle our write when they update the slot data.
   {
