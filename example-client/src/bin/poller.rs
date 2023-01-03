@@ -6,6 +6,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use tokio::time::Instant;
 
 #[derive(Deserialize)]
@@ -20,19 +22,25 @@ struct PollOutput {
   message: Option<PollOutputMessage>,
 }
 
-async fn execute(hostname: &str) -> RoaringBitmap {
+async fn execute(hostname: &str, conn_err_cnt: Arc<AtomicU64>) -> RoaringBitmap {
   let mut bitmap = RoaringBitmap::new();
-  let client = reqwest::Client::new();
+  let client = reqwest::Client::builder()
+    .connect_timeout(std::time::Duration::from_secs(5))
+    .build()
+    .unwrap();
   let url = format!("http://{}:3333/poll", hostname);
   loop {
-    let res = client
+    let Ok(req) = client
       .post(&url)
       .json(&json!({
         "visibility_timeout_secs": 60,
       }))
       .send()
-      .await
-      .unwrap()
+      .await else {
+        conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        continue;
+      };
+    let res = req
       .error_for_status()
       .unwrap()
       .json::<PollOutput>()
@@ -101,8 +109,9 @@ async fn main() {
   let args = Cli::parse();
   let started = Instant::now();
   let mut tasks = Vec::with_capacity(args.concurrency.try_into().unwrap());
+  let connection_error_counter = Arc::new(AtomicU64::new(0));
   for _ in 0..args.concurrency {
-    tasks.push(execute(&args.hostname));
+    tasks.push(execute(&args.hostname, connection_error_counter.clone()));
   }
   let polled_ids = join_all(tasks).await;
   let exec_dur = started.elapsed();
@@ -126,9 +135,10 @@ async fn main() {
   assert_eq!(args.count, expected_next_id);
 
   println!(
-    "Polled and deleted {} messages with {} concurrency in {} seconds",
+    "Polled and deleted {} messages with {} concurrency in {} seconds ({} network errors)",
     args.count,
     args.concurrency,
-    exec_dur.as_secs_f64()
+    exec_dur.as_secs_f64(),
+    connection_error_counter.load(std::sync::atomic::Ordering::Relaxed),
   );
 }

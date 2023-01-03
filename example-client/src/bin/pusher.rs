@@ -6,26 +6,37 @@ use futures::future::join_all;
 use serde_json::json;
 use serde_json::Value;
 use std::cmp::min;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use tokio::time::Instant;
 
-async fn execute(hostname: &str, start: u32, end: u32) -> () {
-  let client = reqwest::Client::new();
+async fn execute(hostname: &str, start: u32, end: u32, conn_err_cnt: Arc<AtomicU64>) -> () {
+  let client = reqwest::Client::builder()
+    .connect_timeout(std::time::Duration::from_secs(5))
+    .build()
+    .unwrap();
   let url = format!("http://{}:3333/push", hostname);
   for id in start..end {
-    client
-      .post(&url)
-      .json(&json!({
-        "content": id.to_string(),
-        "visibility_timeout_secs": 0,
-      }))
-      .send()
-      .await
-      .unwrap()
-      .error_for_status()
-      .unwrap()
-      .json::<Value>()
-      .await
-      .unwrap();
+    loop {
+      let Ok(req) = client
+        .post(&url)
+        .json(&json!({
+          "content": id.to_string(),
+          "visibility_timeout_secs": 0,
+        }))
+        .send()
+        .await else {
+          conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+          continue;
+        };
+      req
+        .error_for_status()
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+      break;
+    }
   }
 }
 
@@ -47,18 +58,25 @@ async fn main() {
   let args = Cli::parse();
   let started = Instant::now();
   let mut tasks = Vec::with_capacity(args.concurrency.try_into().unwrap());
+  let connection_error_counter = Arc::new(AtomicU64::new(0));
   let count_per_concurrency = args.count.div_ceil(args.concurrency);
   for c in 0..args.concurrency {
     let first = c * count_per_concurrency;
     let last = min(args.count, (c + 1) * count_per_concurrency);
-    tasks.push(execute(&args.hostname, first, last));
+    tasks.push(execute(
+      &args.hostname,
+      first,
+      last,
+      connection_error_counter.clone(),
+    ));
   }
   join_all(tasks).await;
   let exec_dur = started.elapsed();
   println!(
-    "Pushed {} messages with {} concurrency in {} seconds",
+    "Pushed {} messages with {} concurrency in {} seconds ({} network errors)",
     args.count,
     args.concurrency,
-    exec_dur.as_secs_f64()
+    exec_dur.as_secs_f64(),
+    connection_error_counter.load(std::sync::atomic::Ordering::Relaxed),
   );
 }
