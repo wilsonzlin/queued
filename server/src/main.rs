@@ -1,3 +1,7 @@
+#[cfg(feature = "alloc_jemalloc")]
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 pub mod const_;
 pub mod ctx;
 pub mod endpoint;
