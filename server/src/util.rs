@@ -57,6 +57,7 @@ pub fn repeated_copy<T: Copy>(dest: &mut [T], src: &[T]) {
   }
 }
 
+#[cfg(test)]
 mod tests {
   use super::repeated_copy;
 

@@ -71,8 +71,11 @@ async fn start_server_loop(
 
 // For performance, as we're writing huge chunks, this is synchronous.
 fn format_device(dev: &mut File, dev_size: u64) {
+  let mut template_base_padded = vec![0u8; as_usize!(SLOT_LEN)];
+  template_base_padded[..as_usize!(SLOT_FIXED_FIELDS_LEN)].copy_from_slice(&SLOT_VACANT_TEMPLATE);
+
   let mut template = vec![0u8; min(as_usize!(dev_size), 1024 * 1024 * 1024)];
-  repeated_copy(&mut template, &SLOT_VACANT_TEMPLATE);
+  repeated_copy(&mut template, &template_base_padded);
   let template_len: u64 = template.len().try_into().unwrap();
 
   let mut next = 0;
