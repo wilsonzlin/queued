@@ -25,7 +25,8 @@ struct PollOutput {
 async fn execute(hostname: &str, conn_err_cnt: Arc<AtomicU64>) -> RoaringBitmap {
   let mut bitmap = RoaringBitmap::new();
   let client = reqwest::Client::builder()
-    .connect_timeout(std::time::Duration::from_secs(5))
+    .connect_timeout(std::time::Duration::from_secs(3))
+    .timeout(std::time::Duration::from_secs(6))
     .build()
     .unwrap();
   let url = format!("http://{}:3333/poll", hostname);

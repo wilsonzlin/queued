@@ -12,7 +12,8 @@ use tokio::time::Instant;
 
 async fn execute(hostname: &str, start: u32, end: u32, conn_err_cnt: Arc<AtomicU64>) -> () {
   let client = reqwest::Client::builder()
-    .connect_timeout(std::time::Duration::from_secs(5))
+    .connect_timeout(std::time::Duration::from_secs(3))
+    .timeout(std::time::Duration::from_secs(6))
     .build()
     .unwrap();
   let url = format!("http://{}:3333/push", hostname);
