@@ -79,7 +79,7 @@ Internally, queued records a hash of persisted data (including metadata and data
 Performing backups can be done by stopping the process and taking a copy of the contents of the file/device. Using compression can reduce bandwidth
 (when transferring) and storage usage.
 
-## Metrics
+## Management
 
 `GET /metrics` returns metrics in the Prometheus format.
 

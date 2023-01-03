@@ -32,6 +32,7 @@ use croaring::Bitmap;
 use ctx::AvailableSlots;
 use ctx::Ctx;
 use endpoint::delete::endpoint_delete;
+use endpoint::healthz::endpoint_healthz;
 use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use endpoint::suspend::endpoint_get_suspend;
@@ -67,6 +68,7 @@ async fn start_server_loop(
 
   let app = Router::new()
     .route("/delete", post(endpoint_delete))
+    .route("/healthz", get(endpoint_healthz))
     .route("/poll", post(endpoint_poll))
     .route("/push", post(endpoint_push))
     .route(
