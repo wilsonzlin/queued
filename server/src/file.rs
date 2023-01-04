@@ -155,10 +155,6 @@ impl SeekableAsyncFile {
       let met_deadline = longest_delay_us >= DELAYED_SYNC_US;
 
       if has_pending_futs && (met_bytes_threshold || met_deadline) {
-        state.unsynced_bytes = 0;
-        state.earliest_unsynced = None;
-        state.latest_unsynced = None;
-
         let shortest_delay_us: u64 = state
           .latest_unsynced
           .unwrap()
@@ -166,6 +162,11 @@ impl SeekableAsyncFile {
           .as_micros()
           .try_into()
           .unwrap();
+
+        state.unsynced_bytes = 0;
+        state.earliest_unsynced = None;
+        state.latest_unsynced = None;
+
         // TODO OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
         self
           .metrics
