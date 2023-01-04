@@ -173,12 +173,15 @@ impl SeekableAsyncFile {
   }
 
   #[cfg(feature = "fsync_immediate")]
-  pub async fn sync_data_delayed(&self) {
+  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
+    self.write_at(offset, data).await;
     self.sync_data().await;
   }
 
   #[cfg(feature = "unsafe_fsync_none")]
-  pub async fn sync_data_delayed(&self) {}
+  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
+    self.write_at(offset, data).await;
+  }
 
   #[cfg(feature = "fsync_delayed")]
   pub async fn start_delayed_data_sync_background_loop(&self) {
