@@ -46,7 +46,6 @@ use std::net::SocketAddr;
 use std::os::unix::prelude::FileExt;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
@@ -58,7 +57,7 @@ async fn start_server_loop(
   port: u16,
   available: Mutex<AvailableSlots>,
   device: SeekableAsyncFile,
-  metrics: Metrics,
+  metrics: Arc<Metrics>,
   vacant: Mutex<VacantSlots>,
 ) {
   let ctx = Arc::new(Ctx {
@@ -122,13 +121,12 @@ struct LoadedData {
 }
 
 async fn load_data_from_device(
-  available_gauge: Arc<AtomicU64>,
-  vacant_gauge: Arc<AtomicU64>,
+  metrics: Arc<Metrics>,
   dev: &SeekableAsyncFile,
   dev_size: u64,
 ) -> LoadedData {
-  let mut available = AvailableSlots::new(available_gauge);
-  let mut vacant = VacantSlots::new(vacant_gauge);
+  let mut available = AvailableSlots::new(metrics.clone());
+  let mut vacant = VacantSlots::new(metrics.clone());
 
   let mut offset = 0;
   while offset < dev_size {
@@ -227,7 +225,9 @@ struct Cli {
 async fn main() {
   let cli = Cli::parse();
 
-  let device = SeekableAsyncFile::open(&cli.device).await;
+  let metrics = Arc::new(Metrics::default());
+
+  let device = SeekableAsyncFile::open(&cli.device, metrics.clone()).await;
 
   let device_size = match cli.device_size {
     Some(s) => s,
@@ -246,15 +246,8 @@ async fn main() {
     return;
   }
 
-  let metrics = Metrics::default();
-
-  let LoadedData { available, vacant } = load_data_from_device(
-    metrics.available_gauge.clone(),
-    metrics.vacant_gauge.clone(),
-    &device,
-    device_size,
-  )
-  .await;
+  let LoadedData { available, vacant } =
+    load_data_from_device(metrics.clone(), &device, device_size).await;
 
   let server_fut = start_server_loop(
     cli.interface,

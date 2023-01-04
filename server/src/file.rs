@@ -1,25 +1,27 @@
+use crate::ctx::Metrics;
 use itertools::Itertools;
 use std::future::Future;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
-use std::time::Instant;
 use tokio::fs::File;
 use tokio::fs::OpenOptions;
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
+use tokio::time::Instant;
 
 const DELAYED_SYNC_BYTES_THRESHOLD: usize = 4 * 1024 * 1024;
 const DELAYED_SYNC_US: u64 = 100;
 
 struct PendingSyncState {
   unsynced_bytes: usize,
-  unsynced_since: Instant,
+  unsynced_since: Option<Instant>, // Only set when first pending_sync_fut_states is created; otherwise, metrics are misleading as we'd count time when no one is waiting for a sync as delayed sync time.
   pending_sync_fut_states: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
 }
 
@@ -28,6 +30,7 @@ struct PendingSyncState {
 #[derive(Clone)]
 pub struct SeekableAsyncFile {
   fd: Arc<std::fs::File>,
+  metrics: Arc<Metrics>,
   pending_sync_state: Arc<Mutex<PendingSyncState>>,
 }
 
@@ -55,18 +58,19 @@ impl Future for PendingSyncFuture {
 }
 
 impl SeekableAsyncFile {
-  fn from_fd(fd: std::fs::File) -> Self {
+  fn from_fd(fd: std::fs::File, metrics: Arc<Metrics>) -> Self {
     SeekableAsyncFile {
       fd: Arc::new(fd),
+      metrics,
       pending_sync_state: Arc::new(Mutex::new(PendingSyncState {
         unsynced_bytes: 0,
-        unsynced_since: Instant::now(),
+        unsynced_since: None,
         pending_sync_fut_states: Vec::new(),
       })),
     }
   }
 
-  pub async fn open(path: &Path) -> Self {
+  pub async fn open(path: &Path, metrics: Arc<Metrics>) -> Self {
     let async_fd = OpenOptions::new()
       .read(true)
       .write(true)
@@ -74,13 +78,13 @@ impl SeekableAsyncFile {
       .await
       .unwrap();
     let fd = async_fd.into_std().await;
-    SeekableAsyncFile::from_fd(fd)
+    SeekableAsyncFile::from_fd(fd, metrics)
   }
 
-  pub async fn create(path: &Path) -> Self {
+  pub async fn create(path: &Path, metrics: Arc<Metrics>) -> Self {
     let async_fd = File::create(path).await.unwrap();
     let fd = async_fd.into_std().await;
-    SeekableAsyncFile::from_fd(fd)
+    SeekableAsyncFile::from_fd(fd, metrics)
   }
 
   // Since spawn_blocking requires 'static lifetime, we don't have a read_into_at function taht takes a &mut [u8] buffer, as it would be more like a Arc<Mutex<Vec<u8>>>, at which point the overhead is not really worth it for small reads.
@@ -107,9 +111,25 @@ impl SeekableAsyncFile {
 
   pub async fn write_at(&self, offset: u64, data: Vec<u8>) {
     let fd = self.fd.clone();
+    let len: u64 = data.len().try_into().unwrap();
+    let started = Instant::now();
     spawn_blocking(move || fd.write_all_at(&data, offset).unwrap())
       .await
       .unwrap();
+    // Yes, we're including the overhead of Tokio's spawn_blocking.
+    let call_us: u64 = started.elapsed().as_micros().try_into().unwrap();
+    self
+      .metrics
+      .io_write_bytes_counter
+      .fetch_add(len, Ordering::Relaxed);
+    self
+      .metrics
+      .io_write_counter
+      .fetch_add(1, Ordering::Relaxed);
+    self
+      .metrics
+      .io_write_us_counter
+      .fetch_add(call_us, Ordering::Relaxed);
   }
 
   #[cfg(feature = "fsync_delayed")]
@@ -122,13 +142,39 @@ impl SeekableAsyncFile {
       let mut state = self.pending_sync_state.lock().await;
       state.unsynced_bytes += increment_unsynced_bytes;
 
+      let unsynced_bytes = state.unsynced_bytes;
+      let delay_us: u64 = state
+        .unsynced_since
+        .map(|i| i.elapsed().as_micros().try_into().unwrap())
+        .unwrap_or(0);
+
       let has_pending_futs = !state.pending_sync_fut_states.is_empty();
-      let met_bytes_threshold = state.unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
-      let met_deadline = state.unsynced_since.elapsed().as_micros() >= u128::from(DELAYED_SYNC_US);
+      let met_bytes_threshold = unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
+      let met_deadline = delay_us >= DELAYED_SYNC_US;
 
       if has_pending_futs && (met_bytes_threshold || met_deadline) {
         state.unsynced_bytes = 0;
-        state.unsynced_since = Instant::now();
+        state.unsynced_since = None;
+
+        // TODO OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
+        self
+          .metrics
+          .io_sync_delay_us_counter
+          .fetch_add(delay_us, Ordering::Relaxed);
+        if met_bytes_threshold {
+          self
+            .metrics
+            .io_sync_triggered_by_bytes_counter
+            .fetch_add(1, Ordering::Relaxed);
+        } else if met_deadline {
+          self
+            .metrics
+            .io_sync_triggered_by_time_counter
+            .fetch_add(1, Ordering::Relaxed);
+        } else {
+          unreachable!();
+        };
+
         (
           Some(state.pending_sync_fut_states.drain(..).collect_vec()),
           None,
@@ -138,7 +184,12 @@ impl SeekableAsyncFile {
           completed: false,
           waker: None,
         }));
+        state.unsynced_since.get_or_insert_with(|| Instant::now());
         state.pending_sync_fut_states.push(fut_state.clone());
+        self
+          .metrics
+          .io_sync_delayed_counter
+          .fetch_add(1, Ordering::Relaxed);
         (
           None,
           Some(PendingSyncFuture {
@@ -193,16 +244,17 @@ impl SeekableAsyncFile {
 
   pub async fn sync_data(&self) {
     let fd = self.fd.clone();
+    let started = Instant::now();
     spawn_blocking(move || fd.sync_data().unwrap())
       .await
       .unwrap();
-  }
-
-  pub async fn sync_all(&self) {
-    let fd = self.fd.clone();
-    spawn_blocking(move || fd.sync_all().unwrap())
-      .await
-      .unwrap();
+    // Yes, we're including the overhead of Tokio's spawn_blocking.
+    let sync_us: u64 = started.elapsed().as_micros().try_into().unwrap();
+    self.metrics.io_sync_counter.fetch_add(1, Ordering::Relaxed);
+    self
+      .metrics
+      .io_sync_us_counter
+      .fetch_add(sync_us, Ordering::Relaxed);
   }
 
   pub async fn truncate(&self, len: u64) {

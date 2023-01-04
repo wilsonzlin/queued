@@ -17,16 +17,16 @@ pub struct AvailableSlot {
 }
 
 pub struct AvailableSlots {
-  gauge: Arc<AtomicU64>,
+  metrics: Arc<Metrics>,
   // Since we don't expect there to be many entries in each DateTime<Utc> entry, a HashSet is more optimised than a RoaringBitmap.
   ordered_by_visible_time: BTreeMap<DateTime<Utc>, HashSet<u32>>,
   by_index: HashMap<u32, DateTime<Utc>>,
 }
 
 impl AvailableSlots {
-  pub fn new(gauge: Arc<AtomicU64>) -> AvailableSlots {
+  pub fn new(metrics: Arc<Metrics>) -> AvailableSlots {
     AvailableSlots {
-      gauge,
+      metrics,
       by_index: HashMap::new(),
       ordered_by_visible_time: BTreeMap::new(),
     }
@@ -48,7 +48,7 @@ impl AvailableSlots {
     let None = self.by_index.insert(index, ts) else {
       panic!("slot already exists");
     };
-    self.gauge.fetch_add(1, Ordering::Relaxed);
+    self.metrics.available_gauge.fetch_add(1, Ordering::Relaxed);
   }
 
   pub fn has(&self, index: u32) -> bool {
@@ -64,7 +64,7 @@ impl AvailableSlots {
     if set.is_empty() {
       self.ordered_by_visible_time.remove(&ts).unwrap();
     }
-    self.gauge.fetch_sub(1, Ordering::Relaxed);
+    self.metrics.available_gauge.fetch_sub(1, Ordering::Relaxed);
     Some(())
   }
 
@@ -104,14 +104,14 @@ impl AvailableSlots {
 
 pub struct VacantSlots {
   bitmap: Bitmap,
-  gauge: Arc<AtomicU64>,
+  metrics: Arc<Metrics>,
 }
 
 impl VacantSlots {
-  pub fn new(gauge: Arc<AtomicU64>) -> VacantSlots {
+  pub fn new(metrics: Arc<Metrics>) -> VacantSlots {
     VacantSlots {
       bitmap: Bitmap::create(),
-      gauge,
+      metrics,
     }
   }
 
@@ -119,7 +119,7 @@ impl VacantSlots {
     if !self.bitmap.add_checked(index) {
       panic!("slot already exists");
     };
-    self.gauge.fetch_add(1, Ordering::Relaxed);
+    self.metrics.vacant_gauge.fetch_add(1, Ordering::Relaxed);
   }
 
   pub fn count(&self) -> u64 {
@@ -130,7 +130,7 @@ impl VacantSlots {
     let index = self.bitmap.minimum();
     if let Some(index) = index {
       self.bitmap.remove(index);
-      self.gauge.fetch_sub(1, Ordering::Relaxed);
+      self.metrics.vacant_gauge.fetch_sub(1, Ordering::Relaxed);
     };
     index
   }
@@ -138,22 +138,31 @@ impl VacantSlots {
 
 #[derive(Default)]
 pub struct Metrics {
-  pub available_gauge: Arc<AtomicU64>,
-  pub empty_poll_counter: Arc<AtomicU64>,
-  pub missing_delete_counter: Arc<AtomicU64>,
-  pub successful_delete_counter: Arc<AtomicU64>,
-  pub successful_poll_counter: Arc<AtomicU64>,
-  pub successful_push_counter: Arc<AtomicU64>,
-  pub suspended_delete_counter: Arc<AtomicU64>,
-  pub suspended_poll_counter: Arc<AtomicU64>,
-  pub suspended_push_counter: Arc<AtomicU64>,
-  pub vacant_gauge: Arc<AtomicU64>,
+  pub available_gauge: AtomicU64,
+  pub empty_poll_counter: AtomicU64,
+  pub io_sync_counter: AtomicU64,
+  pub io_sync_delay_us_counter: AtomicU64,
+  pub io_sync_delayed_counter: AtomicU64,
+  pub io_sync_triggered_by_bytes_counter: AtomicU64,
+  pub io_sync_triggered_by_time_counter: AtomicU64,
+  pub io_sync_us_counter: AtomicU64,
+  pub io_write_bytes_counter: AtomicU64,
+  pub io_write_counter: AtomicU64,
+  pub io_write_us_counter: AtomicU64,
+  pub missing_delete_counter: AtomicU64,
+  pub successful_delete_counter: AtomicU64,
+  pub successful_poll_counter: AtomicU64,
+  pub successful_push_counter: AtomicU64,
+  pub suspended_delete_counter: AtomicU64,
+  pub suspended_poll_counter: AtomicU64,
+  pub suspended_push_counter: AtomicU64,
+  pub vacant_gauge: AtomicU64,
 }
 
 pub struct Ctx {
   pub available: Mutex<AvailableSlots>,
   pub device: SeekableAsyncFile,
-  pub metrics: Metrics,
+  pub metrics: Arc<Metrics>,
   pub suspend_delete: AtomicBool,
   pub suspend_poll: AtomicBool,
   pub suspend_push: AtomicBool,

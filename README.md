@@ -72,7 +72,7 @@ On a machine with an Intel Core i5-12400 CPU, Samsung 970 EVO Plus 1TB NVMe SSD,
 
 ## Safety
 
-At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate.
+At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are strongly consistent and immediately visible to all other callers.
 
 Internally, queued records a hash of persisted data (including metadata and data of messages), to verify integrity when starting the server. It's recommended to use error-detecting-and-correcting durable storage when running in production, like any other stateful workload.
 
@@ -81,22 +81,87 @@ Performing backups can be done by stopping the process and taking a copy of the 
 
 ## Management
 
+`GET /healthz` returns the current build version.
+
 `GET /metrics` returns metrics in the Prometheus format:
 
 ```
-queued_available_gauge 0 1672744275921
-queued_empty_poll_counter 2048 1672744275921
-queued_missing_delete_counter 0 1672744275921
-queued_successful_delete_counter 1000000 1672744275921
-queued_successful_poll_counter 1000000 1672744275921
-queued_successful_push_counter 1000000 1672744275921
-queued_suspended_delete_counter 0 1672744275921
-queued_suspended_poll_counter 0 1672744275921
-queued_suspended_push_counter 0 1672744275921
-queued_vacant_gauge 1000000 1672744275921
-```
+# HELP queued_available Amount of messages currently in the queue, including both past and future visibility timestamps.
+# TYPE queued_available gauge
+queued_available 0 1672810593535
 
-`GET /healthz` returns the current build version.
+# HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
+# TYPE queued_empty_poll counter
+queued_empty_poll 2048 1672810593535
+
+# HELP queued_io_sync Total number of fsync and fdatasync syscalls.
+# TYPE queued_io_sync counter
+queued_io_sync 306225 1672810593535
+
+# HELP queued_io_sync_delay_us Total number of microseconds spent waiting for a sync by one or more delayed syncs.
+# TYPE queued_io_sync_delay_us counter
+queued_io_sync_delay_us 83998350 1672810593535
+
+# HELP queued_io_sync_delayed Total number of requested syncs that were delayed until a later time.
+# TYPE queued_io_sync_delayed counter
+queued_io_sync_delayed 2699011 1672810593535
+
+# HELP queued_io_sync_triggered_by_bytes Total number of syncs that were triggered due to too many written bytes from delayed syncs.
+# TYPE queued_io_sync_triggered_by_bytes counter
+queued_io_sync_triggered_by_bytes 0 1672810593535
+
+# HELP queued_io_sync_triggered_by_time Total number of syncs that were triggered due to too much time since last sync.
+# TYPE queued_io_sync_triggered_by_time counter
+queued_io_sync_triggered_by_time 306225 1672810593535
+
+# HELP queued_io_sync_us Total number of microseconds spent in fsync and fdatasync syscalls.
+# TYPE queued_io_sync_us counter
+queued_io_sync_us 5437977110 1672810593535
+
+# HELP queued_io_write_bytes Total number of bytes written.
+# TYPE queued_io_write_bytes counter
+queued_io_write_bytes 263888890 1672810593535
+
+# HELP queued_io_write Total number of write syscalls.
+# TYPE queued_io_write counter
+queued_io_write 3000000 1672810593535
+
+# HELP queued_io_write_us Total number of microseconds spent in write syscalls.
+# TYPE queued_io_write_us counter
+queued_io_write_us 24196483739 1672810593535
+
+# HELP queued_missing_delete Total number of delete requests that failed due to the requested message not being found.
+# TYPE queued_missing_delete counter
+queued_missing_delete 0 1672810593535
+
+# HELP queued_successful_delete Total number of delete requests that did delete a message successfully.
+# TYPE queued_successful_delete counter
+queued_successful_delete 1000000 1672810593535
+
+# HELP queued_successful_poll Total number of poll requests that did poll a message successfully.
+# TYPE queued_successful_poll counter
+queued_successful_poll 1000000 1672810593535
+
+# HELP queued_successful_push Total number of push requests that did push a message successfully.
+# TYPE queued_successful_push counter
+queued_successful_push 1000000 1672810593535
+
+# HELP queued_suspended_delete Total number of delete requests while the endpoint was suspended.
+# TYPE queued_suspended_delete counter
+queued_suspended_delete 0 1672810593535
+
+# HELP queued_suspended_poll Total number of poll requests while the endpoint was suspended.
+# TYPE queued_suspended_poll counter
+queued_suspended_poll 0 1672810593535
+
+# HELP queued_suspended_push Total number of push requests while the endpoint was suspended.
+# TYPE queued_suspended_push counter
+queued_suspended_push 0 1672810593535
+
+# HELP queued_vacant How many more messages that can currently be pushed into the queue.
+# TYPE queued_vacant gauge
+queued_vacant 1000000 1672810593535
+```
 
 `POST /suspend` can suspend specific API endpoints, useful for temporary debugging or emergency intervention without stopping the server. It takes a request body like:
 
@@ -108,14 +173,14 @@ queued_vacant_gauge 1000000 1672744275921
 }
 ```
 
-Set a property to `true` to disable that endpoint, and `false` to re-enable it. Disabled endpoints will return `503 Service Unavailable`. Use `GET /suspend` to get currently suspended endpoints.
+Set a property to `true` to disable that endpoint, and `false` to re-enable it. Disabled endpoints will return `503 Service Unavailable`. Use `GET /suspend` to get the currently suspended endpoints.
 
 ## Important details
 
 - The index and poll tag values are opaque and should not be used as unique IDs.
 - If you require more than one queue (e.g. channels), run multiple servers.
 - Messages are limited to 1 KiB, including metadata. This will be adjustable at format time in the future.
-- The server is limited to up to 2<sup>32</sup> (around 4 billion) messages at any time. This is currently a simplification optimisation, and may be adjusted in the future.
+- The server is limited to up to 2<sup>32</sup> (around 4 billion) messages at any time. Note that this would require 16 TiBs of storage. This is currently a simplification optimisation, and may be adjusted in the future.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.
 
 ## Development
