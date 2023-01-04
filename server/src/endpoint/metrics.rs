@@ -65,7 +65,15 @@ pub async fn endpoint_metrics(
   write_line!(
     ctx,
     out,
-    io_sync_delay_us_counter,
+    io_sync_delayed_counter,
+    ts,
+    "Total number of requested syncs that were delayed until a later time."
+  );
+
+  write_line!(
+    ctx,
+    out,
+    io_sync_longest_delay_us_counter,
     ts,
     "Total number of microseconds spent waiting for a sync by one or more delayed syncs."
   );
@@ -73,9 +81,9 @@ pub async fn endpoint_metrics(
   write_line!(
     ctx,
     out,
-    io_sync_delayed_counter,
+    io_sync_shortest_delay_us_counter,
     ts,
-    "Total number of requested syncs that were delayed until a later time."
+    "Total number of microseconds spent waiting after a final delayed sync before the actual sync."
   );
 
   write_line!(

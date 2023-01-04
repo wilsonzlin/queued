@@ -21,7 +21,8 @@ const DELAYED_SYNC_US: u64 = 100;
 
 struct PendingSyncState {
   unsynced_bytes: usize,
-  unsynced_since: Option<Instant>, // Only set when first pending_sync_fut_states is created; otherwise, metrics are misleading as we'd count time when no one is waiting for a sync as delayed sync time.
+  earliest_unsynced: Option<Instant>, // Only set when first pending_sync_fut_states is created; otherwise, metrics are misleading as we'd count time when no one is waiting for a sync as delayed sync time.
+  latest_unsynced: Option<Instant>,
   pending_sync_fut_states: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
 }
 
@@ -64,7 +65,8 @@ impl SeekableAsyncFile {
       metrics,
       pending_sync_state: Arc::new(Mutex::new(PendingSyncState {
         unsynced_bytes: 0,
-        unsynced_since: None,
+        earliest_unsynced: None,
+        latest_unsynced: None,
         pending_sync_fut_states: Vec::new(),
       })),
     }
@@ -143,24 +145,36 @@ impl SeekableAsyncFile {
       state.unsynced_bytes += increment_unsynced_bytes;
 
       let unsynced_bytes = state.unsynced_bytes;
-      let delay_us: u64 = state
-        .unsynced_since
+      let longest_delay_us: u64 = state
+        .earliest_unsynced
         .map(|i| i.elapsed().as_micros().try_into().unwrap())
         .unwrap_or(0);
 
       let has_pending_futs = !state.pending_sync_fut_states.is_empty();
       let met_bytes_threshold = unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
-      let met_deadline = delay_us >= DELAYED_SYNC_US;
+      let met_deadline = longest_delay_us >= DELAYED_SYNC_US;
 
       if has_pending_futs && (met_bytes_threshold || met_deadline) {
         state.unsynced_bytes = 0;
-        state.unsynced_since = None;
+        state.earliest_unsynced = None;
+        state.latest_unsynced = None;
 
+        let shortest_delay_us: u64 = state
+          .latest_unsynced
+          .unwrap()
+          .elapsed()
+          .as_micros()
+          .try_into()
+          .unwrap();
         // TODO OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
         self
           .metrics
-          .io_sync_delay_us_counter
-          .fetch_add(delay_us, Ordering::Relaxed);
+          .io_sync_longest_delay_us_counter
+          .fetch_add(longest_delay_us, Ordering::Relaxed);
+        self
+          .metrics
+          .io_sync_shortest_delay_us_counter
+          .fetch_add(shortest_delay_us, Ordering::Relaxed);
         if met_bytes_threshold {
           self
             .metrics
@@ -184,7 +198,9 @@ impl SeekableAsyncFile {
           completed: false,
           waker: None,
         }));
-        state.unsynced_since.get_or_insert_with(|| Instant::now());
+        let now = Instant::now();
+        state.earliest_unsynced.get_or_insert(now);
+        state.latest_unsynced = Some(now);
         state.pending_sync_fut_states.push(fut_state.clone());
         self
           .metrics
