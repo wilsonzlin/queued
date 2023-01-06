@@ -9,14 +9,15 @@ use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
-use tokio::fs::File;
 use tokio::fs::OpenOptions;
+use tokio::spawn;
 use tokio::sync::Mutex;
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 use tokio::time::Instant;
 
-const DELAYED_SYNC_BYTES_THRESHOLD: usize = 4 * 1024 * 1024;
+// Approximately 512 average-length messages (1 KiB / 2).
+const DELAYED_SYNC_BYTES_THRESHOLD: usize = 512 * 512;
 const DELAYED_SYNC_US: u64 = 100;
 
 struct PendingSyncState {
@@ -59,7 +60,25 @@ impl Future for PendingSyncFuture {
 }
 
 impl SeekableAsyncFile {
-  fn from_fd(fd: std::fs::File, metrics: Arc<Metrics>) -> Self {
+  pub async fn open(path: &Path, metrics: Arc<Metrics>, io_direct: bool, io_dsync: bool) -> Self {
+    let mut flags = 0;
+    if io_direct {
+      flags |= libc::O_DIRECT;
+    };
+    if io_dsync {
+      flags |= libc::O_DSYNC;
+    };
+
+    let async_fd = OpenOptions::new()
+      .read(true)
+      .write(true)
+      .custom_flags(flags)
+      .open(path)
+      .await
+      .unwrap();
+
+    let fd = async_fd.into_std().await;
+
     SeekableAsyncFile {
       fd: Arc::new(fd),
       metrics,
@@ -70,23 +89,6 @@ impl SeekableAsyncFile {
         pending_sync_fut_states: Vec::new(),
       })),
     }
-  }
-
-  pub async fn open(path: &Path, metrics: Arc<Metrics>) -> Self {
-    let async_fd = OpenOptions::new()
-      .read(true)
-      .write(true)
-      .open(path)
-      .await
-      .unwrap();
-    let fd = async_fd.into_std().await;
-    SeekableAsyncFile::from_fd(fd, metrics)
-  }
-
-  pub async fn create(path: &Path, metrics: Arc<Metrics>) -> Self {
-    let async_fd = File::create(path).await.unwrap();
-    let fd = async_fd.into_std().await;
-    SeekableAsyncFile::from_fd(fd, metrics)
   }
 
   // Since spawn_blocking requires 'static lifetime, we don't have a read_into_at function taht takes a &mut [u8] buffer, as it would be more like a Arc<Mutex<Vec<u8>>>, at which point the overhead is not really worth it for small reads.
@@ -140,7 +142,27 @@ impl SeekableAsyncFile {
     increment_unsynced_bytes: usize,
     keep_waiting: bool,
   ) {
-    let (fut_states, created_fut) = {
+    enum SyncNowReason {
+      MetBytesThreshold,
+      MetDeadline,
+    }
+    enum Action {
+      SyncNow {
+        futures_to_wake: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
+        // For metrics.
+        longest_delay_us: u64,
+        shortest_delay_us: u64,
+        reason: SyncNowReason,
+      },
+      AwaitFuture {
+        future: PendingSyncFuture,
+      },
+      Nothing,
+    }
+
+    let (lock_time_us, action) = {
+      let lock_started = Instant::now();
+
       let mut state = self.pending_sync_state.lock().await;
       state.unsynced_bytes += increment_unsynced_bytes;
 
@@ -154,7 +176,7 @@ impl SeekableAsyncFile {
       let met_bytes_threshold = unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
       let met_deadline = longest_delay_us >= DELAYED_SYNC_US;
 
-      if has_pending_futs && (met_bytes_threshold || met_deadline) {
+      let action = if has_pending_futs && (met_bytes_threshold || met_deadline) {
         let shortest_delay_us: u64 = state
           .latest_unsynced
           .unwrap()
@@ -167,33 +189,18 @@ impl SeekableAsyncFile {
         state.earliest_unsynced = None;
         state.latest_unsynced = None;
 
-        // TODO OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
-        self
-          .metrics
-          .io_sync_longest_delay_us_counter
-          .fetch_add(longest_delay_us, Ordering::Relaxed);
-        self
-          .metrics
-          .io_sync_shortest_delay_us_counter
-          .fetch_add(shortest_delay_us, Ordering::Relaxed);
-        if met_bytes_threshold {
-          self
-            .metrics
-            .io_sync_triggered_by_bytes_counter
-            .fetch_add(1, Ordering::Relaxed);
-        } else if met_deadline {
-          self
-            .metrics
-            .io_sync_triggered_by_time_counter
-            .fetch_add(1, Ordering::Relaxed);
-        } else {
-          unreachable!();
-        };
-
-        (
-          Some(state.pending_sync_fut_states.drain(..).collect_vec()),
-          None,
-        )
+        Action::SyncNow {
+          futures_to_wake: state.pending_sync_fut_states.drain(..).collect_vec(),
+          longest_delay_us,
+          shortest_delay_us,
+          reason: if met_bytes_threshold {
+            SyncNowReason::MetBytesThreshold
+          } else if met_deadline {
+            SyncNowReason::MetDeadline
+          } else {
+            unreachable!();
+          },
+        }
       } else if keep_waiting {
         let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
           completed: false,
@@ -203,33 +210,75 @@ impl SeekableAsyncFile {
         state.earliest_unsynced.get_or_insert(now);
         state.latest_unsynced = Some(now);
         state.pending_sync_fut_states.push(fut_state.clone());
+        Action::AwaitFuture {
+          future: PendingSyncFuture {
+            shared_state: fut_state,
+          },
+        }
+      } else {
+        Action::Nothing
+      };
+
+      let lock_time_us: u64 = lock_started.elapsed().as_micros().try_into().unwrap();
+
+      (lock_time_us, action)
+    };
+
+    self
+      .metrics
+      .io_sync_lock_hold_us_counter
+      .fetch_add(lock_time_us, Ordering::Relaxed);
+    self
+      .metrics
+      .io_sync_lock_holds_counter
+      .fetch_add(1, Ordering::Relaxed);
+
+    match action {
+      Action::SyncNow {
+        futures_to_wake,
+        longest_delay_us,
+        shortest_delay_us,
+        reason,
+      } => {
+        // OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
+        self
+          .metrics
+          .io_sync_longest_delay_us_counter
+          .fetch_add(longest_delay_us, Ordering::Relaxed);
+        self
+          .metrics
+          .io_sync_shortest_delay_us_counter
+          .fetch_add(shortest_delay_us, Ordering::Relaxed);
+        match reason {
+          SyncNowReason::MetBytesThreshold => self
+            .metrics
+            .io_sync_triggered_by_bytes_counter
+            .fetch_add(1, Ordering::Relaxed),
+          SyncNowReason::MetDeadline => self
+            .metrics
+            .io_sync_triggered_by_time_counter
+            .fetch_add(1, Ordering::Relaxed),
+        };
+
+        assert!(!futures_to_wake.is_empty());
+        self.sync_data().await;
+        for ft in futures_to_wake {
+          let mut ft = ft.lock().unwrap();
+          ft.completed = true;
+          if let Some(waker) = ft.waker.take() {
+            waker.wake();
+          };
+        }
+      }
+      Action::AwaitFuture { future } => {
+        // OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
         self
           .metrics
           .io_sync_delayed_counter
           .fetch_add(1, Ordering::Relaxed);
-        (
-          None,
-          Some(PendingSyncFuture {
-            shared_state: fut_state,
-          }),
-        )
-      } else {
-        (None, None)
+        future.await;
       }
-    };
-    if let Some(fut_states) = fut_states {
-      assert!(!fut_states.is_empty());
-      self.sync_data().await;
-      for ft in fut_states {
-        let mut ft = ft.lock().unwrap();
-        ft.completed = true;
-        if let Some(waker) = ft.waker.take() {
-          waker.wake();
-        };
-      }
-    };
-    if let Some(fut) = created_fut {
-      fut.await;
+      Action::Nothing => {}
     };
   }
 
@@ -255,7 +304,12 @@ impl SeekableAsyncFile {
   pub async fn start_delayed_data_sync_background_loop(&self) {
     loop {
       sleep(std::time::Duration::from_micros(DELAYED_SYNC_US)).await;
-      self.maybe_perform_delayed_data_sync_now(0, false).await;
+      let file = self.clone();
+      spawn(async move { file.maybe_perform_delayed_data_sync_now(0, false).await });
+      self
+        .metrics
+        .io_sync_background_loops_counter
+        .fetch_add(1, Ordering::Relaxed);
     }
   }
 

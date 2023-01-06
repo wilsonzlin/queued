@@ -65,9 +65,33 @@ pub async fn endpoint_metrics(
   write_line!(
     ctx,
     out,
+    io_sync_background_loops_counter,
+    ts,
+    "Total number of delayed sync background loop iterations."
+  );
+
+  write_line!(
+    ctx,
+    out,
     io_sync_delayed_counter,
     ts,
     "Total number of requested syncs that were delayed until a later time."
+  );
+
+  write_line!(
+    ctx,
+    out,
+    io_sync_lock_hold_us_counter,
+    ts,
+    "Total microseconds spent holding I/O sync lock."
+  );
+
+  write_line!(
+    ctx,
+    out,
+    io_sync_lock_holds_counter,
+    ts,
+    "Total number of I/O sync lock acquisitions."
   );
 
   write_line!(

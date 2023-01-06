@@ -19,6 +19,7 @@ async fn execute(
   let client = reqwest::Client::builder()
     .connect_timeout(std::time::Duration::from_secs(connect_timeout))
     .timeout(std::time::Duration::from_secs(request_timeout))
+    .pool_max_idle_per_host(1048576)
     .build()
     .unwrap();
   let url = format!("http://{}:3333/push", hostname);

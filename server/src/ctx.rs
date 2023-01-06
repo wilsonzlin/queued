@@ -140,8 +140,11 @@ impl VacantSlots {
 pub struct Metrics {
   pub available_gauge: AtomicU64,
   pub empty_poll_counter: AtomicU64,
+  pub io_sync_background_loops_counter: AtomicU64,
   pub io_sync_counter: AtomicU64,
   pub io_sync_delayed_counter: AtomicU64,
+  pub io_sync_lock_hold_us_counter: AtomicU64,
+  pub io_sync_lock_holds_counter: AtomicU64,
   pub io_sync_longest_delay_us_counter: AtomicU64,
   pub io_sync_shortest_delay_us_counter: AtomicU64,
   pub io_sync_triggered_by_bytes_counter: AtomicU64,
