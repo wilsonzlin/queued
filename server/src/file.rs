@@ -1,5 +1,4 @@
 use crate::ctx::Metrics;
-use itertools::Itertools;
 use std::future::Future;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
@@ -16,12 +15,9 @@ use tokio::task::spawn_blocking;
 use tokio::time::sleep;
 use tokio::time::Instant;
 
-// Approximately 512 average-length messages (1 KiB / 2).
-const DELAYED_SYNC_BYTES_THRESHOLD: usize = 512 * 512;
 const DELAYED_SYNC_US: u64 = 100;
 
 struct PendingSyncState {
-  unsynced_bytes: usize,
   earliest_unsynced: Option<Instant>, // Only set when first pending_sync_fut_states is created; otherwise, metrics are misleading as we'd count time when no one is waiting for a sync as delayed sync time.
   latest_unsynced: Option<Instant>,
   pending_sync_fut_states: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
@@ -83,7 +79,6 @@ impl SeekableAsyncFile {
       fd: Arc::new(fd),
       metrics,
       pending_sync_state: Arc::new(Mutex::new(PendingSyncState {
-        unsynced_bytes: 0,
         earliest_unsynced: None,
         latest_unsynced: None,
         pending_sync_fut_states: Vec::new(),
@@ -137,156 +132,31 @@ impl SeekableAsyncFile {
   }
 
   #[cfg(feature = "fsync_delayed")]
-  async fn maybe_perform_delayed_data_sync_now(
-    &self,
-    increment_unsynced_bytes: usize,
-    keep_waiting: bool,
-  ) {
-    enum SyncNowReason {
-      MetBytesThreshold,
-      MetDeadline,
-    }
-    enum Action {
-      SyncNow {
-        futures_to_wake: Vec<Arc<std::sync::Mutex<PendingSyncFutureState>>>,
-        // For metrics.
-        longest_delay_us: u64,
-        shortest_delay_us: u64,
-        reason: SyncNowReason,
-      },
-      AwaitFuture {
-        future: PendingSyncFuture,
-      },
-      Nothing,
-    }
+  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
+    self.write_at(offset, data).await;
 
-    let (lock_time_us, action) = {
-      let lock_started = Instant::now();
+    let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
+      completed: false,
+      waker: None,
+    }));
 
+    {
       let mut state = self.pending_sync_state.lock().await;
-      state.unsynced_bytes += increment_unsynced_bytes;
-
-      let unsynced_bytes = state.unsynced_bytes;
-      let longest_delay_us: u64 = state
-        .earliest_unsynced
-        .map(|i| i.elapsed().as_micros().try_into().unwrap())
-        .unwrap_or(0);
-
-      let has_pending_futs = !state.pending_sync_fut_states.is_empty();
-      let met_bytes_threshold = unsynced_bytes >= DELAYED_SYNC_BYTES_THRESHOLD;
-      let met_deadline = longest_delay_us >= DELAYED_SYNC_US;
-
-      let action = if has_pending_futs && (met_bytes_threshold || met_deadline) {
-        let shortest_delay_us: u64 = state
-          .latest_unsynced
-          .unwrap()
-          .elapsed()
-          .as_micros()
-          .try_into()
-          .unwrap();
-
-        state.unsynced_bytes = 0;
-        state.earliest_unsynced = None;
-        state.latest_unsynced = None;
-
-        Action::SyncNow {
-          futures_to_wake: state.pending_sync_fut_states.drain(..).collect_vec(),
-          longest_delay_us,
-          shortest_delay_us,
-          reason: if met_bytes_threshold {
-            SyncNowReason::MetBytesThreshold
-          } else if met_deadline {
-            SyncNowReason::MetDeadline
-          } else {
-            unreachable!();
-          },
-        }
-      } else if keep_waiting {
-        let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
-          completed: false,
-          waker: None,
-        }));
-        let now = Instant::now();
-        state.earliest_unsynced.get_or_insert(now);
-        state.latest_unsynced = Some(now);
-        state.pending_sync_fut_states.push(fut_state.clone());
-        Action::AwaitFuture {
-          future: PendingSyncFuture {
-            shared_state: fut_state,
-          },
-        }
-      } else {
-        Action::Nothing
-      };
-
-      let lock_time_us: u64 = lock_started.elapsed().as_micros().try_into().unwrap();
-
-      (lock_time_us, action)
+      let now = Instant::now();
+      state.earliest_unsynced.get_or_insert(now);
+      state.latest_unsynced = Some(now);
+      state.pending_sync_fut_states.push(fut_state.clone());
     };
 
     self
       .metrics
-      .io_sync_lock_hold_us_counter
-      .fetch_add(lock_time_us, Ordering::Relaxed);
-    self
-      .metrics
-      .io_sync_lock_holds_counter
+      .io_sync_delayed_counter
       .fetch_add(1, Ordering::Relaxed);
 
-    match action {
-      Action::SyncNow {
-        futures_to_wake,
-        longest_delay_us,
-        shortest_delay_us,
-        reason,
-      } => {
-        // OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
-        self
-          .metrics
-          .io_sync_longest_delay_us_counter
-          .fetch_add(longest_delay_us, Ordering::Relaxed);
-        self
-          .metrics
-          .io_sync_shortest_delay_us_counter
-          .fetch_add(shortest_delay_us, Ordering::Relaxed);
-        match reason {
-          SyncNowReason::MetBytesThreshold => self
-            .metrics
-            .io_sync_triggered_by_bytes_counter
-            .fetch_add(1, Ordering::Relaxed),
-          SyncNowReason::MetDeadline => self
-            .metrics
-            .io_sync_triggered_by_time_counter
-            .fetch_add(1, Ordering::Relaxed),
-        };
-
-        assert!(!futures_to_wake.is_empty());
-        self.sync_data().await;
-        for ft in futures_to_wake {
-          let mut ft = ft.lock().unwrap();
-          ft.completed = true;
-          if let Some(waker) = ft.waker.take() {
-            waker.wake();
-          };
-        }
-      }
-      Action::AwaitFuture { future } => {
-        // OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
-        self
-          .metrics
-          .io_sync_delayed_counter
-          .fetch_add(1, Ordering::Relaxed);
-        future.await;
-      }
-      Action::Nothing => {}
-    };
-  }
-
-  #[cfg(feature = "fsync_delayed")]
-  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
-    let len = data.len();
-    self.write_at(offset, data).await;
-    self.maybe_perform_delayed_data_sync_now(len, true).await;
+    PendingSyncFuture {
+      shared_state: fut_state,
+    }
+    .await;
   }
 
   #[cfg(feature = "fsync_immediate")]
@@ -302,10 +172,77 @@ impl SeekableAsyncFile {
 
   #[cfg(feature = "fsync_delayed")]
   pub async fn start_delayed_data_sync_background_loop(&self) {
+    let mut futures_to_wake = Vec::new();
     loop {
       sleep(std::time::Duration::from_micros(DELAYED_SYNC_US)).await;
-      let file = self.clone();
-      spawn(async move { file.maybe_perform_delayed_data_sync_now(0, false).await });
+
+      struct SyncNow {
+        longest_delay_us: u64,
+        shortest_delay_us: u64,
+      }
+
+      let sync_now = {
+        let mut state = self.pending_sync_state.lock().await;
+
+        if !state.pending_sync_fut_states.is_empty() {
+          let longest_delay_us: u64 = state
+            .earliest_unsynced
+            .unwrap()
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap();
+
+          let shortest_delay_us: u64 = state
+            .latest_unsynced
+            .unwrap()
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap();
+
+          state.earliest_unsynced = None;
+          state.latest_unsynced = None;
+
+          futures_to_wake.extend(state.pending_sync_fut_states.drain(..));
+
+          Some(SyncNow {
+            longest_delay_us,
+            shortest_delay_us,
+          })
+        } else {
+          None
+        }
+      };
+
+      if let Some(SyncNow {
+        longest_delay_us,
+        shortest_delay_us,
+      }) = sync_now
+      {
+        // OPTIMISATION: Don't perform these atomic operations while unnecessarily holding up the lock.
+        self
+          .metrics
+          .io_sync_longest_delay_us_counter
+          .fetch_add(longest_delay_us, Ordering::Relaxed);
+        self
+          .metrics
+          .io_sync_shortest_delay_us_counter
+          .fetch_add(shortest_delay_us, Ordering::Relaxed);
+
+        assert!(!futures_to_wake.is_empty());
+        let file = self.clone();
+        spawn(async move { file.sync_data().await }).await.unwrap();
+
+        for ft in futures_to_wake.drain(..) {
+          let mut ft = ft.lock().unwrap();
+          ft.completed = true;
+          if let Some(waker) = ft.waker.take() {
+            waker.wake();
+          };
+        }
+      };
+
       self
         .metrics
         .io_sync_background_loops_counter

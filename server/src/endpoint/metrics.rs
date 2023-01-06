@@ -81,22 +81,6 @@ pub async fn endpoint_metrics(
   write_line!(
     ctx,
     out,
-    io_sync_lock_hold_us_counter,
-    ts,
-    "Total microseconds spent holding I/O sync lock."
-  );
-
-  write_line!(
-    ctx,
-    out,
-    io_sync_lock_holds_counter,
-    ts,
-    "Total number of I/O sync lock acquisitions."
-  );
-
-  write_line!(
-    ctx,
-    out,
     io_sync_longest_delay_us_counter,
     ts,
     "Total number of microseconds spent waiting for a sync by one or more delayed syncs."
@@ -108,22 +92,6 @@ pub async fn endpoint_metrics(
     io_sync_shortest_delay_us_counter,
     ts,
     "Total number of microseconds spent waiting after a final delayed sync before the actual sync."
-  );
-
-  write_line!(
-    ctx,
-    out,
-    io_sync_triggered_by_bytes_counter,
-    ts,
-    "Total number of syncs that were triggered due to too many written bytes from delayed syncs."
-  );
-
-  write_line!(
-    ctx,
-    out,
-    io_sync_triggered_by_time_counter,
-    ts,
-    "Total number of syncs that were triggered due to too much time since last sync."
   );
 
   write_line!(
