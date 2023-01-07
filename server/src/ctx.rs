@@ -2,6 +2,7 @@ use crate::file::SeekableAsyncFile;
 use chrono::DateTime;
 use chrono::Utc;
 use croaring::Bitmap;
+use itertools::Itertools;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -133,6 +134,20 @@ impl VacantSlots {
       self.metrics.vacant_gauge.fetch_sub(1, Ordering::Relaxed);
     };
     index
+  }
+
+  pub fn take_n(&mut self, n: usize) -> Vec<u32> {
+    let indices = self.bitmap.iter().take(n).collect_vec();
+    if !indices.is_empty() {
+      self
+        .bitmap
+        .remove_range(indices[0]..=*indices.last().unwrap());
+      self
+        .metrics
+        .vacant_gauge
+        .fetch_sub(indices.len().try_into().unwrap(), Ordering::Relaxed);
+    };
+    indices
   }
 }
 

@@ -78,7 +78,6 @@ pub async fn endpoint_push(
     .write_at_with_delayed_sync(slot_offset, slot_data)
     .await;
 
-  // Only insert after write syscall has completed. Writes are immediately visible to all threads and processes, even before fsync. This also prevents a poller to mangle our write when they update the slot data.
   {
     let mut available = ctx.available.lock().await;
     available.insert(index, visible_time);
