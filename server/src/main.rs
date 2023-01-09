@@ -235,9 +235,6 @@ async fn main() {
 
   let metrics = Arc::new(Metrics::default());
 
-  let device =
-    SeekableAsyncFile::open(&cli.device, metrics.clone(), cli.io_direct, cli.io_dsync).await;
-
   let device_size = match cli.device_size {
     Some(s) => s,
     None => get_device_size(&cli.device).await,
@@ -245,6 +242,15 @@ async fn main() {
   if device_size % SLOT_LEN != 0 {
     panic!("device must be an exact multiple of {} bytes", SLOT_LEN);
   };
+
+  let device = SeekableAsyncFile::open(
+    &cli.device,
+    device_size,
+    metrics.clone(),
+    cli.io_direct,
+    cli.io_dsync,
+  )
+  .await;
 
   if cli.format {
     format_device(

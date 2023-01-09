@@ -1,4 +1,5 @@
 use crate::ctx::Metrics;
+use crate::util::as_usize;
 use std::future::Future;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
@@ -27,7 +28,12 @@ struct PendingSyncState {
 // Apparently spawn_blocking is how Tokio does all file operations (as not all platforms have native async I/O), so our use is not worse but not optimised for async I/O either.
 #[derive(Clone)]
 pub struct SeekableAsyncFile {
+  #[cfg(feature = "io_tokio_file")]
   fd: Arc<std::fs::File>,
+  #[cfg(feature = "io_mmap")]
+  mmap: Arc<memmap2::MmapRaw>,
+  #[cfg(feature = "io_mmap")]
+  mmap_len: usize,
   metrics: Arc<Metrics>,
   pending_sync_state: Arc<Mutex<PendingSyncState>>,
 }
@@ -56,7 +62,13 @@ impl Future for PendingSyncFuture {
 }
 
 impl SeekableAsyncFile {
-  pub async fn open(path: &Path, metrics: Arc<Metrics>, io_direct: bool, io_dsync: bool) -> Self {
+  pub async fn open(
+    path: &Path,
+    size: u64,
+    metrics: Arc<Metrics>,
+    io_direct: bool,
+    io_dsync: bool,
+  ) -> Self {
     let mut flags = 0;
     if io_direct {
       flags |= libc::O_DIRECT;
@@ -76,7 +88,12 @@ impl SeekableAsyncFile {
     let fd = async_fd.into_std().await;
 
     SeekableAsyncFile {
+      #[cfg(feature = "io_tokio_file")]
       fd: Arc::new(fd),
+      #[cfg(feature = "io_mmap")]
+      mmap: Arc::new(memmap2::MmapRaw::map_raw(&fd).unwrap()),
+      #[cfg(feature = "io_mmap")]
+      mmap_len: as_usize!(size),
       metrics,
       pending_sync_state: Arc::new(Mutex::new(PendingSyncState {
         earliest_unsynced: None,
@@ -87,6 +104,7 @@ impl SeekableAsyncFile {
   }
 
   // Since spawn_blocking requires 'static lifetime, we don't have a read_into_at function taht takes a &mut [u8] buffer, as it would be more like a Arc<Mutex<Vec<u8>>>, at which point the overhead is not really worth it for small reads.
+  #[cfg(feature = "io_tokio_file")]
   pub async fn read_at(&self, offset: u64, len: u64) -> Vec<u8> {
     let fd = self.fd.clone();
     spawn_blocking(move || {
@@ -96,6 +114,14 @@ impl SeekableAsyncFile {
     })
     .await
     .unwrap()
+  }
+
+  #[cfg(feature = "io_mmap")]
+  pub async fn read_at(&self, offset: u64, len: u64) -> Vec<u8> {
+    let offset = as_usize!(offset);
+    let len = as_usize!(len);
+    let memory = unsafe { std::slice::from_raw_parts(self.mmap.as_ptr(), self.mmap_len) };
+    memory[offset..offset + len].to_vec()
   }
 
   pub async fn read_u16_at(&self, offset: u64) -> u16 {
@@ -108,6 +134,7 @@ impl SeekableAsyncFile {
     u64::from_be_bytes(bytes.try_into().unwrap())
   }
 
+  #[cfg(feature = "io_tokio_file")]
   pub async fn write_at(&self, offset: u64, data: Vec<u8>) {
     let fd = self.fd.clone();
     let len: u64 = data.len().try_into().unwrap();
@@ -129,6 +156,15 @@ impl SeekableAsyncFile {
       .metrics
       .io_write_us_counter
       .fetch_add(call_us, Ordering::Relaxed);
+  }
+
+  #[cfg(feature = "io_mmap")]
+  pub async fn write_at(&self, offset: u64, data: Vec<u8>) {
+    let offset = as_usize!(offset);
+    let len = data.len();
+
+    let memory = unsafe { std::slice::from_raw_parts_mut(self.mmap.as_mut_ptr(), self.mmap_len) };
+    memory[offset..offset + len].copy_from_slice(&data);
   }
 
   #[cfg(feature = "fsync_delayed")]
@@ -251,11 +287,21 @@ impl SeekableAsyncFile {
   }
 
   pub async fn sync_data(&self) {
+    #[cfg(feature = "io_tokio_file")]
     let fd = self.fd.clone();
+    #[cfg(feature = "io_mmap")]
+    let mmap = self.mmap.clone();
+
     let started = Instant::now();
-    spawn_blocking(move || fd.sync_data().unwrap())
-      .await
-      .unwrap();
+    spawn_blocking(move || {
+      #[cfg(feature = "io_tokio_file")]
+      fd.sync_data().unwrap();
+
+      #[cfg(feature = "io_mmap")]
+      mmap.flush().unwrap();
+    })
+    .await
+    .unwrap();
     // Yes, we're including the overhead of Tokio's spawn_blocking.
     let sync_us: u64 = started.elapsed().as_micros().try_into().unwrap();
     self.metrics.io_sync_counter.fetch_add(1, Ordering::Relaxed);
@@ -263,12 +309,5 @@ impl SeekableAsyncFile {
       .metrics
       .io_sync_us_counter
       .fetch_add(sync_us, Ordering::Relaxed);
-  }
-
-  pub async fn truncate(&self, len: u64) {
-    let fd = self.fd.clone();
-    spawn_blocking(move || fd.set_len(len).unwrap())
-      .await
-      .unwrap();
   }
 }
