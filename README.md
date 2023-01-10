@@ -30,24 +30,24 @@ queued --device /dev/my_block_device
 
 ### Call
 
-```
-🌐 POST localhost:3333/push
+```jsonc
+// 🌐 POST localhost:3333/push
 {
   "messages": [
     { "contents": "Hello, world!", "visibility_timeout_secs": 0 }
   ]
 }
-✅ 200 OK
+// ✅ 200 OK
 {
   "index": 190234
 }
 
 
-🌐 POST localhost:3333/poll
+// 🌐 POST localhost:3333/poll
 {
   "visibility_timeout_secs": 30
 }
-✅ 200 OK
+// ✅ 200 OK
 {
   "message": {
     "contents": "Hello, world!",
@@ -59,12 +59,12 @@ queued --device /dev/my_block_device
 }
 
 
-🌐 POST localhost:3333/delete
+// 🌐 POST localhost:3333/delete
 {
   "index": 190234,
   "poll_tag": "f914659685fcea9d60"
 }
-✅ 200 OK
+// ✅ 200 OK
 {}
 ```
 
