@@ -13,6 +13,7 @@ use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::file::SeekableAsyncFile;
 use crate::util::get_device_size;
 use crate::util::repeated_copy;
+use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
@@ -80,6 +81,7 @@ async fn start_server_loop(
       "/suspend",
       get(endpoint_get_suspend).post(endpoint_post_suspend),
     )
+    .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
     .with_state(ctx.clone());
 
   let addr = SocketAddr::from((interface, port));

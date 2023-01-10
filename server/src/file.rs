@@ -18,6 +18,11 @@ use tokio::time::Instant;
 
 const DELAYED_SYNC_US: u64 = 100;
 
+pub struct WriteRequest {
+  pub data: Vec<u8>,
+  pub offset: u64,
+}
+
 struct PendingSyncState {
   earliest_unsynced: Option<Instant>, // Only set when first pending_sync_fut_states is created; otherwise, metrics are misleading as we'd count time when no one is waiting for a sync as delayed sync time.
   latest_unsynced: Option<Instant>,
@@ -167,43 +172,40 @@ impl SeekableAsyncFile {
     memory[offset..offset + len].copy_from_slice(&data);
   }
 
-  #[cfg(feature = "fsync_delayed")]
-  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
-    self.write_at(offset, data).await;
-
-    let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
-      completed: false,
-      waker: None,
-    }));
-
-    {
-      let mut state = self.pending_sync_state.lock().await;
-      let now = Instant::now();
-      state.earliest_unsynced.get_or_insert(now);
-      state.latest_unsynced = Some(now);
-      state.pending_sync_fut_states.push(fut_state.clone());
-    };
-
-    self
-      .metrics
-      .io_sync_delayed_counter
-      .fetch_add(1, Ordering::Relaxed);
-
-    PendingSyncFuture {
-      shared_state: fut_state,
+  pub async fn write_at_with_delayed_sync(&self, writes: Vec<WriteRequest>) {
+    let count: u64 = writes.len().try_into().unwrap();
+    for w in writes {
+      self.write_at(w.offset, w.data).await;
     }
-    .await;
-  }
 
-  #[cfg(feature = "fsync_immediate")]
-  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
-    self.write_at(offset, data).await;
+    #[cfg(feature = "fsync_immediate")]
     self.sync_data().await;
-  }
 
-  #[cfg(feature = "unsafe_fsync_none")]
-  pub async fn write_at_with_delayed_sync(&self, offset: u64, data: Vec<u8>) {
-    self.write_at(offset, data).await;
+    #[cfg(feature = "fsync_delayed")]
+    {
+      let fut_state = Arc::new(std::sync::Mutex::new(PendingSyncFutureState {
+        completed: false,
+        waker: None,
+      }));
+
+      {
+        let mut state = self.pending_sync_state.lock().await;
+        let now = Instant::now();
+        state.earliest_unsynced.get_or_insert(now);
+        state.latest_unsynced = Some(now);
+        state.pending_sync_fut_states.push(fut_state.clone());
+      };
+
+      self
+        .metrics
+        .io_sync_delayed_counter
+        .fetch_add(count, Ordering::Relaxed);
+
+      PendingSyncFuture {
+        shared_state: fut_state,
+      }
+      .await;
+    };
   }
 
   #[cfg(feature = "fsync_delayed")]

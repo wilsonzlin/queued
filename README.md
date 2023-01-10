@@ -68,7 +68,7 @@ queued --device /dev/my_block_device
 
 ## Performance
 
-On a machine with an Intel Core i5-12400 CPU, Samsung 970 EVO Plus 1TB NVMe SSD, and Linux 5.17 kernel, queued manages around 75,000 operations (push, poll, or delete) per second with 8,192 concurrent clients.
+On a machine with an Intel Core i5-12400 CPU, Samsung 970 EVO Plus 1TB NVMe SSD, and Linux 5.17 kernel, queued manages around 750,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64.
 
 ## Safety
 

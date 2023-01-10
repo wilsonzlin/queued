@@ -136,7 +136,7 @@ impl VacantSlots {
     index
   }
 
-  pub fn take_n(&mut self, n: usize) -> Vec<u32> {
+  pub fn take_up_to_n(&mut self, n: usize) -> Vec<u32> {
     let indices = self.bitmap.iter().take(n).collect_vec();
     if !indices.is_empty() {
       self

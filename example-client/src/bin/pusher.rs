@@ -1,6 +1,7 @@
 use clap::command;
 use clap::Parser;
 use futures::future::join_all;
+use itertools::Itertools;
 use serde_json::json;
 use serde_json::Value;
 use std::cmp::min;
@@ -14,6 +15,7 @@ async fn execute(
   request_timeout: u64,
   start: u32,
   end: u32,
+  batch_size: usize,
   conn_err_cnt: Arc<AtomicU64>,
 ) -> () {
   let client = reqwest::Client::builder()
@@ -23,13 +25,20 @@ async fn execute(
     .build()
     .unwrap();
   let url = format!("http://{}:3333/push", hostname);
-  for id in start..end {
+  for batch in (start..end).chunks(batch_size).into_iter() {
+    let messages = batch
+      .map(|id| {
+        json!({
+          "content": id.to_string(),
+          "visibility_timeout_secs": 0,
+        })
+      })
+      .collect::<Vec<_>>();
     loop {
       let Ok(req) = client
         .post(&url)
         .json(&json!({
-          "content": id.to_string(),
-          "visibility_timeout_secs": 0,
+          "messages": messages,
         }))
         .send()
         .await else {
@@ -64,6 +73,9 @@ struct Cli {
 
   #[arg(long)]
   count: u32,
+
+  #[arg(long)]
+  batch_size: usize,
 }
 
 // https://stackoverflow.com/a/72442854/6249022
@@ -114,6 +126,7 @@ async fn main() {
       args.request_timeout_secs,
       first,
       last,
+      args.batch_size,
       connection_error_counter.clone(),
     ));
   }

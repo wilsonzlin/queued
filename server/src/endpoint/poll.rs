@@ -11,6 +11,7 @@ use crate::const_::SLOT_OFFSETOF_POLL_TAG;
 use crate::const_::SLOT_OFFSETOF_STATE;
 use crate::const_::SLOT_OFFSETOF_VISIBLE_TS;
 use crate::ctx::Ctx;
+use crate::file::WriteRequest;
 use crate::util::as_usize;
 use crate::util::u64_slice;
 use crate::util::u64_slice_write;
@@ -127,7 +128,10 @@ pub async fn endpoint_poll(
   u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
   ctx
     .device
-    .write_at_with_delayed_sync(slot_offset, slot_data)
+    .write_at_with_delayed_sync(vec![WriteRequest {
+      data: slot_data,
+      offset: slot_offset,
+    }])
     .await;
 
   {

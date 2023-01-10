@@ -2,6 +2,7 @@ use crate::const_::SlotState;
 use crate::const_::MESSAGE_SLOT_CONTENT_LEN_MAX;
 use crate::const_::SLOT_LEN;
 use crate::ctx::Ctx;
+use crate::file::WriteRequest;
 use crate::util::as_usize;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -14,14 +15,32 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
-pub struct EndpointPushInput {
+pub struct EndpointPushInputMessage {
   content: String,
   visibility_timeout_secs: i64,
 }
 
+#[derive(Deserialize)]
+pub struct EndpointPushInput {
+  messages: Vec<EndpointPushInputMessage>,
+}
+
+#[derive(Serialize)]
+pub enum EndpointPushOutputErrorType {
+  ContentTooLarge,
+  InvalidVisibilityTimeout,
+  QueueIsFull,
+}
+
+#[derive(Serialize)]
+pub struct EndpointPushOutputError {
+  typ: EndpointPushOutputErrorType,
+  index: usize,
+}
+
 #[derive(Serialize)]
 pub struct EndpointPushOutput {
-  index: u32,
+  errors: Vec<EndpointPushOutputError>,
 }
 
 pub async fn endpoint_push(
@@ -39,53 +58,80 @@ pub async fn endpoint_push(
     ));
   };
 
-  if req.content.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
-    return Err((StatusCode::PAYLOAD_TOO_LARGE, "content is too large"));
+  let mut errors = Vec::new();
+
+  let indices = {
+    let mut vacant = ctx.vacant.lock().await;
+    vacant.take_up_to_n(req.messages.len())
   };
 
-  if req.visibility_timeout_secs < 0 {
-    return Err((StatusCode::BAD_REQUEST, "visibility timeout is negative"));
+  let mut to_add = Vec::new();
+  let mut writes = Vec::new();
+  for (i, msg) in req.messages.into_iter().enumerate() {
+    if msg.content.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
+      errors.push(EndpointPushOutputError {
+        index: i,
+        typ: EndpointPushOutputErrorType::ContentTooLarge,
+      });
+      continue;
+    };
+
+    if msg.visibility_timeout_secs < 0 {
+      errors.push(EndpointPushOutputError {
+        index: i,
+        typ: EndpointPushOutputErrorType::InvalidVisibilityTimeout,
+      });
+      continue;
+    };
+
+    if i >= indices.len() {
+      errors.push(EndpointPushOutputError {
+        index: i,
+        typ: EndpointPushOutputErrorType::QueueIsFull,
+      });
+      continue;
+    };
+
+    let visible_time = Utc::now() + Duration::seconds(msg.visibility_timeout_secs);
+
+    let index = indices[i];
+    let slot_offset = u64::from(index) * SLOT_LEN;
+
+    let content_len: u16 = msg.content.len().try_into().unwrap();
+
+    // Populate slot.
+    let mut slot_data = vec![];
+    slot_data.extend_from_slice(&vec![0u8; 32]); // Placeholder for hash.
+    slot_data.push(1);
+    slot_data.push(SlotState::Available as u8);
+    slot_data.extend_from_slice(&vec![0u8; 30]);
+    slot_data.extend_from_slice(&Utc::now().timestamp().to_be_bytes());
+    slot_data.extend_from_slice(&visible_time.timestamp().to_be_bytes());
+    slot_data.extend_from_slice(&0u32.to_be_bytes());
+    slot_data.extend_from_slice(&content_len.to_be_bytes());
+    slot_data.extend_from_slice(&msg.content.into_bytes());
+    let hash = blake3::hash(&slot_data[32..]);
+    slot_data[..32].copy_from_slice(hash.as_bytes());
+
+    to_add.push((index, visible_time));
+    writes.push(WriteRequest {
+      data: slot_data,
+      offset: slot_offset,
+    });
   }
 
-  let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
-
-  let index = {
-    let mut vacant = ctx.vacant.lock().await;
-    let Some(index) = vacant.take() else {
-      return Err((StatusCode::INSUFFICIENT_STORAGE, "queue is currently full"));
-    };
-    index
-  };
-  let slot_offset = u64::from(index) * SLOT_LEN;
-
-  let content_len: u16 = req.content.len().try_into().unwrap();
-
-  // Populate slot.
-  let mut slot_data = vec![];
-  slot_data.extend_from_slice(&vec![0u8; 32]); // Placeholder for hash.
-  slot_data.push(1);
-  slot_data.push(SlotState::Available as u8);
-  slot_data.extend_from_slice(&vec![0u8; 30]);
-  slot_data.extend_from_slice(&Utc::now().timestamp().to_be_bytes());
-  slot_data.extend_from_slice(&visible_time.timestamp().to_be_bytes());
-  slot_data.extend_from_slice(&0u32.to_be_bytes());
-  slot_data.extend_from_slice(&content_len.to_be_bytes());
-  slot_data.extend_from_slice(&req.content.into_bytes());
-  let hash = blake3::hash(&slot_data[32..]);
-  slot_data[..32].copy_from_slice(hash.as_bytes());
-  ctx
-    .device
-    .write_at_with_delayed_sync(slot_offset, slot_data)
-    .await;
+  ctx.device.write_at_with_delayed_sync(writes).await;
 
   {
     let mut available = ctx.available.lock().await;
-    available.insert(index, visible_time);
+    for (index, visible_time) in to_add {
+      available.insert(index, visible_time);
+    }
   };
 
   ctx
     .metrics
     .successful_push_counter
     .fetch_add(1, Ordering::Relaxed);
-  Ok(Json(EndpointPushOutput { index }))
+  Ok(Json(EndpointPushOutput { errors }))
 }

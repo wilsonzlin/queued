@@ -2,6 +2,7 @@ use crate::const_::SLOT_LEN;
 use crate::const_::SLOT_OFFSETOF_POLL_TAG;
 use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::ctx::Ctx;
+use crate::file::WriteRequest;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -79,7 +80,10 @@ pub async fn endpoint_delete(
 
   ctx
     .device
-    .write_at_with_delayed_sync(slot_offset, SLOT_VACANT_TEMPLATE.clone())
+    .write_at_with_delayed_sync(vec![WriteRequest {
+      data: SLOT_VACANT_TEMPLATE.clone(),
+      offset: slot_offset,
+    }])
     .await;
 
   {
