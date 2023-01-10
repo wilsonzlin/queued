@@ -33,7 +33,9 @@ queued --device /dev/my_block_device
 ```
 🌐 POST localhost:3333/push
 {
-  "contents": "Hello, world!"
+  "messages": [
+    { "contents": "Hello, world!", "visibility_timeout_secs": 0 }
+  ]
 }
 ✅ 200 OK
 {

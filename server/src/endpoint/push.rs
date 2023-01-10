@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct EndpointPushInputMessage {
-  content: String,
+  contents: String,
   visibility_timeout_secs: i64,
 }
 
@@ -68,7 +68,7 @@ pub async fn endpoint_push(
   let mut to_add = Vec::new();
   let mut writes = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
-    if msg.content.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
+    if msg.contents.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
       errors.push(EndpointPushOutputError {
         index: i,
         typ: EndpointPushOutputErrorType::ContentTooLarge,
@@ -97,7 +97,7 @@ pub async fn endpoint_push(
     let index = indices[i];
     let slot_offset = u64::from(index) * SLOT_LEN;
 
-    let content_len: u16 = msg.content.len().try_into().unwrap();
+    let content_len: u16 = msg.contents.len().try_into().unwrap();
 
     // Populate slot.
     let mut slot_data = vec![];
@@ -109,7 +109,7 @@ pub async fn endpoint_push(
     slot_data.extend_from_slice(&visible_time.timestamp().to_be_bytes());
     slot_data.extend_from_slice(&0u32.to_be_bytes());
     slot_data.extend_from_slice(&content_len.to_be_bytes());
-    slot_data.extend_from_slice(&msg.content.into_bytes());
+    slot_data.extend_from_slice(&msg.contents.into_bytes());
     let hash = blake3::hash(&slot_data[32..]);
     slot_data[..32].copy_from_slice(hash.as_bytes());
 
