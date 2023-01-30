@@ -1,5 +1,6 @@
 use crate::ctx::Metrics;
 use crate::util::as_usize;
+use crate::util::dur_us;
 use std::future::Future;
 use std::os::unix::prelude::FileExt;
 use std::path::Path;
@@ -223,21 +224,9 @@ impl SeekableAsyncFile {
         let mut state = self.pending_sync_state.lock().await;
 
         if !state.pending_sync_fut_states.is_empty() {
-          let longest_delay_us: u64 = state
-            .earliest_unsynced
-            .unwrap()
-            .elapsed()
-            .as_micros()
-            .try_into()
-            .unwrap();
+          let longest_delay_us = dur_us(state.earliest_unsynced.unwrap());
 
-          let shortest_delay_us: u64 = state
-            .latest_unsynced
-            .unwrap()
-            .elapsed()
-            .as_micros()
-            .try_into()
-            .unwrap();
+          let shortest_delay_us = dur_us(state.latest_unsynced.unwrap());
 
           state.earliest_unsynced = None;
           state.latest_unsynced = None;

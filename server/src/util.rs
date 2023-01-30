@@ -4,6 +4,7 @@ use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::io::AsyncSeekExt;
+use tokio::time::Instant;
 
 // Use this over `as usize` for safety without verbosity of `.try_into::<usize>().unwrap()`.
 macro_rules! as_usize {
@@ -55,6 +56,10 @@ pub fn repeated_copy<T: Copy>(dest: &mut [T], src: &[T]) {
     dest.copy_within(..end - next, next);
     next = end;
   }
+}
+
+pub fn dur_us(dur: Instant) -> u64 {
+  dur.elapsed().as_micros().try_into().unwrap()
 }
 
 #[cfg(test)]
