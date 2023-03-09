@@ -67,14 +67,13 @@ pub async fn endpoint_poll(
 
   let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);
 
-  let index = {
+  let Some(index) = ({
     let mut available = ctx.available.lock().await;
     // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
-    let Some(index) = available.remove_earliest_up_to(&poll_time) else {
-      ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
-      return Ok(Json(EndpointPollOutput { message: None }));
-    };
-    index
+    available.remove_earliest_up_to(&poll_time)
+  }) else {
+    ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
+    return Ok(Json(EndpointPollOutput { message: None }));
   };
 
   let slot_offset = u64::from(index) * SLOT_LEN;

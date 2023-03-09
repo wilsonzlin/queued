@@ -49,7 +49,13 @@ pub async fn endpoint_metrics(
   let ts = Utc::now().timestamp_millis().to_string();
 
   write_line!(
-    get_atomic_metric!(ctx, available_gauge), out, available, gauge, ts, "Amount of messages currently in the queue, including both past and future visibility timestamps.");
+    get_atomic_metric!(ctx, available_gauge),
+    out,
+    available,
+    gauge,
+    ts,
+    "Amount of messages currently in the queue, including both past and future visibility timestamps."
+  );
 
   write_line!(
     get_atomic_metric!(ctx, empty_poll_counter),

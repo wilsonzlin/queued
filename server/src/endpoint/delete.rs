@@ -45,15 +45,15 @@ pub async fn endpoint_delete(
   }
 
   // We use double-checked locking to avoid an expensive I/O read of the poll tag.
-  {
+  if !{
     let available = ctx.available.lock().await;
-    if !available.has(req.index) {
-      ctx
-        .metrics
-        .missing_delete_counter
-        .fetch_add(1, Ordering::Relaxed);
-      return Err((StatusCode::NOT_FOUND, "message not found"));
-    };
+    available.has(req.index)
+  } {
+    ctx
+      .metrics
+      .missing_delete_counter
+      .fetch_add(1, Ordering::Relaxed);
+    return Err((StatusCode::NOT_FOUND, "message not found"));
   };
 
   // Note that there may be subtle race conditions here, as we're not holding a lock/in a critical section, but the poll tag is 30 bytes of crypto-strength random data, so there shouldn't be any chance of conflict anyway.
@@ -69,13 +69,16 @@ pub async fn endpoint_delete(
     return Err((StatusCode::NOT_FOUND, "invalid poll tag"));
   };
 
-  {
+  if !{
     let mut available = ctx.available.lock().await;
-    let Some(()) = available.remove(req.index) else {
-      ctx.metrics.missing_delete_counter.fetch_add(1, Ordering::Relaxed);
-      // Someone else beat us to it.
-      return Err((StatusCode::NOT_FOUND, "message not found"));
-    };
+    available.remove(req.index).is_some()
+  } {
+    ctx
+      .metrics
+      .missing_delete_counter
+      .fetch_add(1, Ordering::Relaxed);
+    // Someone else beat us to it.
+    return Err((StatusCode::NOT_FOUND, "message not found"));
   };
 
   ctx
