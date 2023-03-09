@@ -1,11 +1,7 @@
-use crate::const_::SLOT_LEN;
-use crate::const_::SLOT_OFFSETOF_POLL_TAG;
-use crate::const_::SLOT_VACANT_TEMPLATE;
 use crate::ctx::Ctx;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use seekable_async_file::WriteRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -35,8 +31,6 @@ pub async fn endpoint_delete(
     ));
   };
 
-  let slot_offset = u64::from(req.index) * SLOT_LEN;
-
   let Ok(req_poll_tag) = hex::decode(req.poll_tag) else {
     return Err((StatusCode::BAD_REQUEST, "invalid poll tag"));
   };
@@ -57,10 +51,7 @@ pub async fn endpoint_delete(
   };
 
   // Note that there may be subtle race conditions here, as we're not holding a lock/in a critical section, but the poll tag is 30 bytes of crypto-strength random data, so there shouldn't be any chance of conflict anyway.
-  let slot_poll_tag = ctx
-    .device
-    .read_at(slot_offset + SLOT_OFFSETOF_POLL_TAG, 30)
-    .await;
+  let slot_poll_tag = ctx.layout.read_poll_tag(req.index).await;
   if slot_poll_tag != req_poll_tag {
     ctx
       .metrics
@@ -81,13 +72,7 @@ pub async fn endpoint_delete(
     return Err((StatusCode::NOT_FOUND, "message not found"));
   };
 
-  ctx
-    .device
-    .write_at_with_delayed_sync(vec![WriteRequest {
-      data: SLOT_VACANT_TEMPLATE.clone(),
-      offset: slot_offset,
-    }])
-    .await;
+  ctx.layout.delete_message(req.index).await;
 
   {
     let mut vacant = ctx.vacant.lock().await;

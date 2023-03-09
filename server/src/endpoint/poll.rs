@@ -1,29 +1,14 @@
-use crate::const_::SlotState;
-use crate::const_::SLOT_FIXED_FIELDS_LEN;
-use crate::const_::SLOT_LEN;
-use crate::const_::SLOT_OFFSETOF_CONTENTS;
-use crate::const_::SLOT_OFFSETOF_CREATED_TS;
-use crate::const_::SLOT_OFFSETOF_HASH;
-use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
-use crate::const_::SLOT_OFFSETOF_LEN;
-use crate::const_::SLOT_OFFSETOF_POLL_COUNT;
-use crate::const_::SLOT_OFFSETOF_POLL_TAG;
-use crate::const_::SLOT_OFFSETOF_STATE;
-use crate::const_::SLOT_OFFSETOF_VISIBLE_TS;
 use crate::ctx::Ctx;
-use crate::util::as_usize;
-use crate::util::u64_slice;
-use crate::util::u64_slice_write;
+use crate::layout::fixed_slots::SlotState;
+use crate::layout::MessageOnDisk;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::DateTime;
 use chrono::Duration;
-use chrono::TimeZone;
 use chrono::Utc;
 use rand::thread_rng;
 use rand::RngCore;
-use seekable_async_file::WriteRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -76,61 +61,27 @@ pub async fn endpoint_poll(
     return Ok(Json(EndpointPollOutput { message: None }));
   };
 
-  let slot_offset = u64::from(index) * SLOT_LEN;
-  let mut slot_data = ctx.device.read_at(slot_offset, SLOT_LEN).await;
-
   let mut poll_tag = vec![0u8; 30];
   thread_rng().fill_bytes(&mut poll_tag);
+  let poll_tag_hex = hex::encode(&poll_tag);
 
-  let created = Utc
-    .timestamp_millis_opt(
-      i64::from_be_bytes(
-        u64_slice(&slot_data, SLOT_OFFSETOF_CREATED_TS, 8)
-          .try_into()
-          .unwrap(),
-      ) * 1000,
-    )
-    .unwrap();
-  let new_poll_count = u32::from_be_bytes(
-    u64_slice(&slot_data, SLOT_OFFSETOF_POLL_COUNT, 4)
-      .try_into()
-      .unwrap(),
-  ) + 1;
-  let len: u64 = u16::from_be_bytes(
-    u64_slice(&slot_data, SLOT_OFFSETOF_LEN, 2)
-      .try_into()
-      .unwrap(),
-  )
-  .into();
-  let contents =
-    String::from_utf8(u64_slice(&slot_data, SLOT_OFFSETOF_CONTENTS, len).to_vec()).unwrap();
+  let MessageOnDisk {
+    contents,
+    created,
+    poll_count,
+  } = ctx.layout.read_message(index).await;
+  let new_poll_count = poll_count + 1;
 
   // Update data.
-  // For efficiency, hash does not cover contents, as contents have already been durabilty persisted. This also saves wasting writes on rewriting contents.
-  slot_data.truncate(as_usize!(SLOT_FIXED_FIELDS_LEN));
-  u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[0]);
-  u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
-    SlotState::Available as u8
-  ]);
-  u64_slice_write(&mut slot_data, SLOT_OFFSETOF_POLL_TAG, &poll_tag);
-  u64_slice_write(
-    &mut slot_data,
-    SLOT_OFFSETOF_VISIBLE_TS,
-    &visible_time.timestamp().to_be_bytes(),
-  );
-  u64_slice_write(
-    &mut slot_data,
-    SLOT_OFFSETOF_POLL_COUNT,
-    &new_poll_count.to_be_bytes(),
-  );
-  let hash = blake3::hash(&slot_data[32..]);
-  u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
   ctx
-    .device
-    .write_at_with_delayed_sync(vec![WriteRequest {
-      data: slot_data,
-      offset: slot_offset,
-    }])
+    .layout
+    .update_message_metadata(index, crate::layout::MessageMetadataUpdate {
+      state: SlotState::Available,
+      poll_tag,
+      created_time: created,
+      visible_time,
+      poll_count: new_poll_count,
+    })
     .await;
 
   {
@@ -142,13 +93,14 @@ pub async fn endpoint_poll(
     .metrics
     .successful_poll_counter
     .fetch_add(1, Ordering::Relaxed);
+
   Ok(Json(EndpointPollOutput {
     message: Some(EndpointPollOutputMessage {
       contents,
       created,
       index,
       poll_count: new_poll_count,
-      poll_tag: hex::encode(poll_tag),
+      poll_tag: poll_tag_hex,
     }),
   }))
 }

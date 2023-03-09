@@ -2,10 +2,11 @@
 
 Fast zero-configuration single-binary simple queue service.
 
-- Three main operations over standard HTTP: push, poll, delete.
 - Exactly once, exactly ordered delivery of messages.
-- Per-message updatable visibility timeouts.
-- Fast direct I/O with underlying storage, bypassing FS.
+- Introspect and query contents, and batch push and delete.
+- Programmatic or temporary flow control with rate limiting and suspension.
+- Fast I/O with underlying storage with minimal writes and API-guaranteed durability.
+- Available as simple library for integration into larger programs.
 
 ## Quick start
 

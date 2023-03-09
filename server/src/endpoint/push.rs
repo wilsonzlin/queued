@@ -1,14 +1,12 @@
-use crate::const_::SlotState;
-use crate::const_::MESSAGE_SLOT_CONTENT_LEN_MAX;
-use crate::const_::SLOT_LEN;
 use crate::ctx::Ctx;
+use crate::layout::fixed_slots::SlotState;
+use crate::layout::MessageCreation;
 use crate::util::as_usize;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use chrono::Duration;
 use chrono::Utc;
-use seekable_async_file::WriteRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -68,7 +66,7 @@ pub async fn endpoint_push(
   let mut to_add = Vec::new();
   let mut writes = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
-    if msg.contents.len() > as_usize!(MESSAGE_SLOT_CONTENT_LEN_MAX) {
+    if msg.contents.len() > as_usize!(ctx.layout.max_content_len()) {
       errors.push(EndpointPushOutputError {
         index: i,
         typ: EndpointPushOutputErrorType::ContentTooLarge,
@@ -95,29 +93,17 @@ pub async fn endpoint_push(
     let visible_time = Utc::now() + Duration::seconds(msg.visibility_timeout_secs);
 
     let index = indices[i];
-    let slot_offset = u64::from(index) * SLOT_LEN;
-
-    let content_len: u16 = msg.contents.len().try_into().unwrap();
-
-    // Populate slot.
-    let mut slot_data = vec![];
-    slot_data.extend_from_slice(&vec![0u8; 32]); // Placeholder for hash.
-    slot_data.push(1);
-    slot_data.push(SlotState::Available as u8);
-    slot_data.extend_from_slice(&vec![0u8; 30]);
-    slot_data.extend_from_slice(&Utc::now().timestamp().to_be_bytes());
-    slot_data.extend_from_slice(&visible_time.timestamp().to_be_bytes());
-    slot_data.extend_from_slice(&0u32.to_be_bytes());
-    slot_data.extend_from_slice(&content_len.to_be_bytes());
-    slot_data.extend_from_slice(&msg.contents.into_bytes());
-    let hash = blake3::hash(&slot_data[32..]);
-    slot_data[..32].copy_from_slice(hash.as_bytes());
 
     to_add.push((index, visible_time));
-    writes.push(WriteRequest {
-      data: slot_data,
-      offset: slot_offset,
-    });
+    writes.push(
+      ctx
+        .layout
+        .prepare_message_creation_write(index, MessageCreation {
+          contents: msg.contents,
+          state: SlotState::Available,
+          visible_time,
+        }),
+    );
   }
 
   ctx.device.write_at_with_delayed_sync(writes).await;
