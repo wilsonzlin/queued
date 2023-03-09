@@ -1,8 +1,9 @@
-use crate::file::SeekableAsyncFile;
 use chrono::DateTime;
 use chrono::Utc;
 use croaring::Bitmap;
 use itertools::Itertools;
+use seekable_async_file::SeekableAsyncFile;
+use seekable_async_file::SeekableAsyncFileMetrics;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -153,17 +154,9 @@ impl VacantSlots {
 
 #[derive(Default)]
 pub struct Metrics {
+  pub io: Arc<SeekableAsyncFileMetrics>,
   pub available_gauge: AtomicU64,
   pub empty_poll_counter: AtomicU64,
-  pub io_sync_background_loops_counter: AtomicU64,
-  pub io_sync_counter: AtomicU64,
-  pub io_sync_delayed_counter: AtomicU64,
-  pub io_sync_longest_delay_us_counter: AtomicU64,
-  pub io_sync_shortest_delay_us_counter: AtomicU64,
-  pub io_sync_us_counter: AtomicU64,
-  pub io_write_bytes_counter: AtomicU64,
-  pub io_write_counter: AtomicU64,
-  pub io_write_us_counter: AtomicU64,
   pub missing_delete_counter: AtomicU64,
   pub successful_delete_counter: AtomicU64,
   pub successful_poll_counter: AtomicU64,

@@ -5,12 +5,10 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 pub mod const_;
 pub mod ctx;
 pub mod endpoint;
-pub mod file;
 pub mod util;
 
 use crate::const_::SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS;
 use crate::const_::SLOT_VACANT_TEMPLATE;
-use crate::file::SeekableAsyncFile;
 use crate::util::get_device_size;
 use crate::util::repeated_copy;
 use axum::extract::DefaultBodyLimit;
@@ -40,6 +38,7 @@ use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use endpoint::suspend::endpoint_get_suspend;
 use endpoint::suspend::endpoint_post_suspend;
+use seekable_async_file::SeekableAsyncFile;
 use std::cmp::min;
 use std::fs::File;
 use std::net::Ipv4Addr;
@@ -231,6 +230,8 @@ struct Cli {
   port: u16,
 }
 
+const DELAYED_SYNC_US: u64 = 100;
+
 #[tokio::main]
 async fn main() {
   let cli = Cli::parse();
@@ -248,7 +249,8 @@ async fn main() {
   let device = SeekableAsyncFile::open(
     &cli.device,
     device_size,
-    metrics.clone(),
+    metrics.io.clone(),
+    std::time::Duration::from_micros(DELAYED_SYNC_US),
     cli.io_direct,
     cli.io_dsync,
   )
@@ -275,12 +277,8 @@ async fn main() {
     Mutex::new(vacant),
   );
 
-  #[cfg(feature = "fsync_delayed")]
   join! {
     server_fut,
     device.start_delayed_data_sync_background_loop(),
   };
-
-  #[cfg(not(feature = "fsync_delayed"))]
-  server_fut.await;
 }
