@@ -1,7 +1,7 @@
 use super::LoadedData;
 use super::MessageCreation;
-use super::MessageMetadataUpdate;
 use super::MessageOnDisk;
+use super::MessagePoll;
 use super::StorageLayout;
 use crate::available::AvailableMessages;
 use crate::metrics::Metrics;
@@ -13,6 +13,7 @@ use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
 use async_trait::async_trait;
 use chrono::Utc;
+use dashmap::DashMap;
 use futures::stream::iter;
 use futures::Future;
 use futures::StreamExt;
@@ -20,7 +21,6 @@ use num_enum::TryFromPrimitive;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
@@ -103,7 +103,7 @@ pub struct LogStructuredLayout {
   device: SeekableAsyncFile,
   device_size: u64,
   // We don't store this in AvailableMessages as that will more than double the size of the index but not be useful for FixedSlotsLayout.
-  index_state: HashMap<u32, MessageState>,
+  index_state: DashMap<u32, MessageState>,
   log_state: Mutex<LogState>,
 }
 
@@ -118,13 +118,31 @@ impl LogStructuredLayout {
     Self {
       device,
       device_size,
-      index_state: HashMap::new(),
+      index_state: DashMap::new(),
       log_state: Mutex::new(LogState::default()),
     }
   }
 
   fn actual_offset(&self, virtual_offset: u64) -> u64 {
     LOGENT_START + (virtual_offset % (self.device_size - LOGENT_START))
+  }
+
+  fn update_index_state_on_create(&self, index: u32, actual_offset: u64) {
+    let existing = self.index_state.insert(index, MessageState {
+      create_offset: actual_offset,
+      ..Default::default()
+    });
+    assert!(existing.is_none());
+  }
+
+  fn update_index_state_on_delete(&self, index: u32) {
+    self.index_state.remove(&index).unwrap();
+  }
+
+  fn update_index_state_on_poll(&self, index: u32, actual_offset: u64) {
+    let mut state = self.index_state.get_mut(&index).unwrap();
+    state.poll_offset = actual_offset;
+    state.poll_count += 1;
   }
 
   // How to use: bump tail first, perform the write to the acquired tail offset, then persist the bumped tail. If tail is committed first, then it'll point to invalid data if the main data write doesn't complete.
@@ -229,7 +247,7 @@ impl StorageLayout for LogStructuredLayout {
       .await;
   }
 
-  async fn load_data_from_device(&mut self, metrics: Arc<Metrics>) -> LoadedData {
+  async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
     let mut available = AvailableMessages::new(metrics.clone());
     let mut vacant = VacantSlots::new(metrics.clone());
     vacant.fill(0, u32::MAX);
@@ -244,52 +262,34 @@ impl StorageLayout for LogStructuredLayout {
 
     let mut virtual_offset = head;
     while virtual_offset < tail {
-      let typ = LogEntryType::try_from(
-        self
-          .device
-          .read_at(self.actual_offset(virtual_offset), 1)
-          .await[0],
-      )
-      .unwrap();
+      let actual_offset = self.actual_offset(virtual_offset);
+      let typ = LogEntryType::try_from(self.device.read_at(actual_offset, 1).await[0]).unwrap();
       match typ {
         LogEntryType::Create => {
           let raw = self
             .device
-            .read_at(
-              self.actual_offset(virtual_offset),
-              LOGENT_CREATE_OFFSETOF_CONTENTS,
-            )
+            .read_at(actual_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
             .await;
           let index = read_u32(&raw, LOGENT_POLL_OFFSETOF_INDEX);
           let visible_time = read_ts(&raw, LOGENT_CREATE_OFFSETOF_VISIBLE_TS);
           let len: u64 = read_u16(&raw, LOGENT_CREATE_OFFSETOF_LEN).into();
-          self.index_state.entry(index).or_default().create_offset =
-            self.actual_offset(virtual_offset);
+          self.update_index_state_on_create(index, actual_offset);
           available.insert(index, visible_time);
           vacant.remove_specific(index);
           virtual_offset += LOGENT_CREATE_OFFSETOF_CONTENTS + len;
         }
         LogEntryType::Poll => {
-          let raw = self
-            .device
-            .read_at(self.actual_offset(virtual_offset), LOGENT_POLL_SIZE)
-            .await;
+          let raw = self.device.read_at(actual_offset, LOGENT_POLL_SIZE).await;
           let index = read_u32(&raw, LOGENT_POLL_OFFSETOF_INDEX);
           let visible_time = read_ts(&raw, LOGENT_POLL_OFFSETOF_VISIBLE_TS);
-          let actual_offset = self.actual_offset(virtual_offset);
-          let mut state = self.index_state.get_mut(&index).unwrap();
-          state.poll_offset = actual_offset;
-          state.poll_count += 1;
+          self.update_index_state_on_poll(index, actual_offset);
           available.update_timestamp(index, visible_time);
           virtual_offset += LOGENT_POLL_SIZE;
         }
         LogEntryType::Delete => {
-          let raw = self
-            .device
-            .read_at(self.actual_offset(virtual_offset), LOGENT_DELETE_SIZE)
-            .await;
+          let raw = self.device.read_at(actual_offset, LOGENT_DELETE_SIZE).await;
           let index = read_u32(&raw, LOGENT_DELETE_OFFSETOF_INDEX);
-          self.index_state.remove(&index).unwrap();
+          self.update_index_state_on_delete(index);
           available.remove(index);
           vacant.add(index);
           virtual_offset += LOGENT_DELETE_SIZE;
@@ -325,6 +325,7 @@ impl StorageLayout for LogStructuredLayout {
       }])
       .await;
     self.commit_tail_bump(bump).await;
+    self.update_index_state_on_delete(index);
   }
 
   async fn read_message(&self, index: u32) -> MessageOnDisk {
@@ -353,7 +354,7 @@ impl StorageLayout for LogStructuredLayout {
     }
   }
 
-  async fn update_message_metadata(&self, index: u32, update: MessageMetadataUpdate) {
+  async fn mark_as_polled(&self, index: u32, update: MessagePoll) {
     let mut data = vec![0u8; as_usize!(LOGENT_POLL_SIZE)];
     data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Poll as u8;
     u64_slice_write(&mut data, LOGENT_POLL_OFFSETOF_INDEX, &index.to_be_bytes());
@@ -372,11 +373,12 @@ impl StorageLayout for LogStructuredLayout {
       }])
       .await;
     self.commit_tail_bump(bump).await;
+    self.update_index_state_on_poll(index, bump.acquired_actual_offset);
   }
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) {
     let mut writes = vec![];
-    // We must commit all bumps, not just the last/largest/highest one, due to the way our algorithm currently works.
+    // We must commit all bumps, not just the last/largest/highest one, due to the way our commit logic currently works.
     let mut bumps = vec![];
     for MessageCreation {
       index,
@@ -418,6 +420,7 @@ impl StorageLayout for LogStructuredLayout {
         offset: bump.acquired_actual_offset,
       });
       bumps.push(bump);
+      self.update_index_state_on_create(index, bump.acquired_actual_offset);
     }
 
     self.device.write_at_with_delayed_sync(writes).await;

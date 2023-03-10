@@ -1,7 +1,7 @@
 use super::LoadedData;
 use super::MessageCreation;
-use super::MessageMetadataUpdate;
 use super::MessageOnDisk;
+use super::MessagePoll;
 use super::StorageLayout;
 use crate::available::AvailableMessages;
 use crate::metrics::Metrics;
@@ -104,21 +104,19 @@ impl StorageLayout for FixedSlotsLayout {
     self.device.sync_data().await;
   }
 
-  async fn load_data_from_device(&mut self, metrics: Arc<Metrics>) -> LoadedData {
-    // Downgrade to non-mut reference to allow copying without lifetime errors.
-    let layout: &Self = self;
+  async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
     let available = Arc::new(Mutex::new(AvailableMessages::new(metrics.clone())));
     let vacant = Arc::new(Mutex::new(VacantSlots::new(metrics.clone())));
     let progress = Arc::new(AtomicU64::new(0));
 
-    futures::stream::iter((0..layout.device_size).step_by(as_usize!(SLOT_LEN)))
+    futures::stream::iter((0..self.device_size).step_by(as_usize!(SLOT_LEN)))
       .for_each_concurrent(None, |offset| {
         let available = available.clone();
         let vacant = vacant.clone();
         let progress = progress.clone();
 
         async move {
-          let mut slot_data = layout.device.read_at(offset, SLOT_LEN).await;
+          let mut slot_data = self.device.read_at(offset, SLOT_LEN).await;
 
           let hash_includes_contents = slot_data[as_usize!(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS)];
           match hash_includes_contents {
@@ -167,7 +165,7 @@ impl StorageLayout for FixedSlotsLayout {
           if completed % 4194304 == 0 {
             println!(
               "Loaded {:.2}%",
-              completed as f64 / (layout.device_size / SLOT_LEN) as f64 * 100.0
+              completed as f64 / (self.device_size / SLOT_LEN) as f64 * 100.0
             );
           };
         }
@@ -216,16 +214,16 @@ impl StorageLayout for FixedSlotsLayout {
     }
   }
 
-  async fn update_message_metadata(
+  async fn mark_as_polled(
     &self,
     index: u32,
-    MessageMetadataUpdate {
+    MessagePoll {
       state,
       poll_tag,
       created_time,
       visible_time,
       poll_count,
-    }: MessageMetadataUpdate,
+    }: MessagePoll,
   ) {
     // For efficiency, hash does not cover contents, as contents have already been durabilty persisted. This also saves wasting writes on rewriting contents.
     let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];

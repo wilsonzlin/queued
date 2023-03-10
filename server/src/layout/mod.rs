@@ -21,7 +21,7 @@ pub struct MessageOnDisk {
   pub contents: String,
 }
 
-pub struct MessageMetadataUpdate {
+pub struct MessagePoll {
   pub state: SlotState,
   pub poll_tag: Vec<u8>,
   pub created_time: DateTime<Utc>, // This should simply be repeated from the existing value; any change will NOT get persisted.
@@ -45,7 +45,7 @@ pub trait StorageLayout {
   async fn format_device(&self) -> ();
 
   // It's safe to assume that this method will only ever be called at most once for the entire lifetime of this StorageLayout, so it's safe to mutate internal state and "initialise" it.
-  async fn load_data_from_device(&mut self, metrics: Arc<Metrics>) -> LoadedData;
+  async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData;
 
   async fn read_poll_tag(&self, index: u32) -> Vec<u8>;
 
@@ -53,7 +53,7 @@ pub trait StorageLayout {
 
   async fn read_message(&self, index: u32) -> MessageOnDisk;
 
-  async fn update_message_metadata(&self, index: u32, update: MessageMetadataUpdate) -> ();
+  async fn mark_as_polled(&self, index: u32, update: MessagePoll) -> ();
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) -> ();
 }

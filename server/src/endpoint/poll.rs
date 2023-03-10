@@ -1,6 +1,7 @@
 use crate::ctx::Ctx;
 use crate::layout::fixed_slots::SlotState;
 use crate::layout::MessageOnDisk;
+use crate::layout::MessagePoll;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
@@ -52,11 +53,8 @@ pub async fn endpoint_poll(
 
   let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);
 
-  let Some(index) = ({
-    let mut available = ctx.available.lock().await;
-    // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
-    available.remove_earliest_up_to(&poll_time)
-  }) else {
+  // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
+  let Some(index) = ctx.available.lock().await.remove_earliest_up_to(&poll_time) else {
     ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
     return Ok(Json(EndpointPollOutput { message: None }));
   };
@@ -75,7 +73,7 @@ pub async fn endpoint_poll(
   // Update data.
   ctx
     .layout
-    .update_message_metadata(index, crate::layout::MessageMetadataUpdate {
+    .mark_as_polled(index, MessagePoll {
       state: SlotState::Available,
       poll_tag,
       created_time: created,

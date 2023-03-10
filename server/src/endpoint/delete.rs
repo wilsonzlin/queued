@@ -39,10 +39,7 @@ pub async fn endpoint_delete(
   }
 
   // We use double-checked locking to avoid an expensive I/O read of the poll tag.
-  if !{
-    let available = ctx.available.lock().await;
-    available.has(req.index)
-  } {
+  if !ctx.available.lock().await.has(req.index) {
     ctx
       .metrics
       .missing_delete_counter
@@ -60,10 +57,7 @@ pub async fn endpoint_delete(
     return Err((StatusCode::NOT_FOUND, "invalid poll tag"));
   };
 
-  if !{
-    let mut available = ctx.available.lock().await;
-    available.remove(req.index).is_some()
-  } {
+  if ctx.available.lock().await.remove(req.index).is_none() {
     ctx
       .metrics
       .missing_delete_counter
