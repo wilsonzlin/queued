@@ -17,11 +17,21 @@ impl VacantSlots {
     }
   }
 
+  pub fn fill(&mut self, from: u32, to_exc: u32) {
+    self.bitmap.add_range(from..to_exc);
+  }
+
   pub fn add(&mut self, index: u32) {
     if !self.bitmap.add_checked(index) {
       panic!("slot already exists");
     };
     self.metrics.vacant_gauge.fetch_add(1, Ordering::Relaxed);
+  }
+
+  pub fn remove_specific(&mut self, index: u32) {
+    if !self.bitmap.remove_checked(index) {
+      panic!("slot does not exist");
+    };
   }
 
   pub fn count(&self) -> u64 {

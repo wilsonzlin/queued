@@ -5,10 +5,10 @@ use crate::vacant::VacantSlots;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
-use seekable_async_file::WriteRequest;
 use std::sync::Arc;
 
 pub mod fixed_slots;
+pub mod log_structured;
 
 pub struct LoadedData {
   pub available: AvailableMessages,
@@ -30,6 +30,7 @@ pub struct MessageMetadataUpdate {
 }
 
 pub struct MessageCreation {
+  pub index: u32,
   pub state: SlotState,
   pub visible_time: DateTime<Utc>,
   pub contents: String,
@@ -37,11 +38,12 @@ pub struct MessageCreation {
 
 #[async_trait]
 pub trait StorageLayout {
-  fn max_content_len(&self) -> u64;
+  fn max_contents_len(&self) -> u64;
 
   async fn format_device(&self) -> ();
 
-  async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData;
+  // It's safe to assume that this method will only ever be called at most once for the entire lifetime of this StorageLayout, so it's safe to mutate internal state and "initialise" it.
+  async fn load_data_from_device(&mut self, metrics: Arc<Metrics>) -> LoadedData;
 
   async fn read_poll_tag(&self, index: u32) -> Vec<u8>;
 
@@ -51,5 +53,5 @@ pub trait StorageLayout {
 
   async fn update_message_metadata(&self, index: u32, update: MessageMetadataUpdate) -> ();
 
-  fn prepare_message_creation_write(&self, index: u32, creation: MessageCreation) -> WriteRequest;
+  async fn create_messages(&self, creations: Vec<MessageCreation>) -> ();
 }

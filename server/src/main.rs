@@ -11,6 +11,7 @@ pub mod util;
 pub mod vacant;
 
 use crate::layout::fixed_slots::FixedSlotsLayout;
+use crate::layout::log_structured::LogStructuredLayout;
 use crate::util::get_device_size;
 use available::AvailableMessages;
 use axum::extract::DefaultBodyLimit;
@@ -95,6 +96,10 @@ struct Cli {
   #[arg(long)]
   device_size: Option<u64>,
 
+  /// [Advanced] Use log structured layout.
+  #[arg(long)]
+  log_structured_layout: bool,
+
   /// Format the device or file. WARNING: All existing data will be erased.
   #[arg(long)]
   format: bool,
@@ -139,7 +144,11 @@ async fn main() {
   )
   .await;
 
-  let layout = Box::new(FixedSlotsLayout::new(device.clone(), device_size));
+  let mut layout: Box<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
+    Box::new(FixedSlotsLayout::new(device.clone(), device_size))
+  } else {
+    Box::new(LogStructuredLayout::new(device.clone(), device_size))
+  };
 
   if cli.format {
     layout.format_device().await;
@@ -155,7 +164,7 @@ async fn main() {
     load_started.elapsed().as_secs_f64()
   );
   println!("Vacant slots: {}", vacant.count());
-  println!("Available slots: {}", available.len());
+  println!("Available messages: {}", available.len());
 
   let server_fut = start_server_loop(
     cli.interface,

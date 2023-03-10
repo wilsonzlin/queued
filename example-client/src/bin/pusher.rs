@@ -29,7 +29,7 @@ async fn execute(
     let messages = batch
       .map(|id| {
         json!({
-          "content": id.to_string(),
+          "contents": id.to_string(),
           "visibility_timeout_secs": 0,
         })
       })

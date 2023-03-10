@@ -25,7 +25,7 @@ pub struct EndpointPushInput {
 
 #[derive(Serialize)]
 pub enum EndpointPushOutputErrorType {
-  ContentTooLarge,
+  ContentsTooLarge,
   InvalidVisibilityTimeout,
   QueueIsFull,
 }
@@ -64,12 +64,12 @@ pub async fn endpoint_push(
   };
 
   let mut to_add = Vec::new();
-  let mut writes = Vec::new();
+  let mut creations = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
-    if msg.contents.len() > as_usize!(ctx.layout.max_content_len()) {
+    if msg.contents.len() > as_usize!(ctx.layout.max_contents_len()) {
       errors.push(EndpointPushOutputError {
         index: i,
-        typ: EndpointPushOutputErrorType::ContentTooLarge,
+        typ: EndpointPushOutputErrorType::ContentsTooLarge,
       });
       continue;
     };
@@ -95,18 +95,15 @@ pub async fn endpoint_push(
     let index = indices[i];
 
     to_add.push((index, visible_time));
-    writes.push(
-      ctx
-        .layout
-        .prepare_message_creation_write(index, MessageCreation {
-          contents: msg.contents,
-          state: SlotState::Available,
-          visible_time,
-        }),
-    );
+    creations.push(MessageCreation {
+      index,
+      contents: msg.contents,
+      state: SlotState::Available,
+      visible_time,
+    });
   }
 
-  ctx.device.write_at_with_delayed_sync(writes).await;
+  ctx.layout.create_messages(creations).await;
 
   {
     let mut available = ctx.available.lock().await;

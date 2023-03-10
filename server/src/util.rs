@@ -1,3 +1,5 @@
+use chrono::DateTime;
+use chrono::TimeZone;
 use chrono::Utc;
 use std::cmp::min;
 use std::io::SeekFrom;
@@ -32,6 +34,22 @@ pub fn u64_slice_write<T: Copy>(slice: &mut [T], offset: u64, new: &[T]) {
 
 pub fn u64_len<T>(slice: &[T]) -> u64 {
   slice.len().try_into().unwrap()
+}
+
+pub fn read_u16(slice: &[u8], offset: u64) -> u16 {
+  u16::from_be_bytes(u64_slice(slice, offset, 2).try_into().unwrap())
+}
+
+pub fn read_u32(slice: &[u8], offset: u64) -> u32 {
+  u32::from_be_bytes(u64_slice(slice, offset, 4).try_into().unwrap())
+}
+
+pub fn read_ts(slice: &[u8], offset: u64) -> DateTime<Utc> {
+  Utc
+    .timestamp_millis_opt(
+      i64::from_be_bytes(u64_slice(slice, offset, 8).try_into().unwrap()) * 1000,
+    )
+    .unwrap()
 }
 
 pub fn now() -> i64 {
