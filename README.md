@@ -3,7 +3,7 @@
 Fast zero-configuration single-binary simple queue service.
 
 - Exactly once, exactly ordered delivery of messages.
-- Introspect and query contents, and batch push and delete.
+- Introspect and query contents, and huge push and delete batching.
 - Programmatic or temporary flow control with rate limiting and suspension.
 - Fast I/O with underlying storage with minimal writes and API-guaranteed durability.
 - Available as simple library for integration into larger programs.
@@ -12,7 +12,7 @@ Fast zero-configuration single-binary simple queue service.
 
 Currently, queued supports Linux only.
 
-queued requires persistent storage, and it's preferred to provide a block device directly (e.g. `/dev/my_block_device`), to bypass the file system. Alternatively, a standard file can be used too (e.g. `/var/lib/queued/data`). In either case, the entire device/file will be used, and it must have a size that's a multiple of 1024 bytes.
+queued requires persistent storage, and it's preferred to provide a block device directly (e.g. `/dev/my_block_device`), to bypass the file system. Alternatively, a standard file can be used too (e.g. `/var/lib/queued/data`). In either case, the entire device/file will be used.
 
 ### Install
 
@@ -71,16 +71,15 @@ queued --device /dev/my_block_device
 
 ## Performance
 
-On a machine with an Intel Core i5-12400 CPU, Samsung 970 EVO Plus 1TB NVMe SSD, and Linux 5.17 kernel, queued manages around 750,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64.
+With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 250,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64. There is minimal memory usage; only a pointer to each message's storage data is stored in memory.
 
 ## Safety
 
-At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are strongly consistent and immediately visible to all other callers.
+At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are immediately visible to all other callers.
 
-Internally, queued records a hash of persisted data (including metadata and data of messages), to verify integrity when starting the server. It's recommended to use error-detecting-and-correcting durable storage when running in production, like any other stateful workload.
+It's recommended to use error-detecting-and-correcting durable storage when running in production, like any other stateful workload.
 
-Performing backups can be done by stopping the process and taking a copy of the contents of the file/device. Using compression can reduce bandwidth
-(when transferring) and storage usage.
+Performing backups can be done by stopping the process and taking a copy of the contents of the file/device. Using compression can reduce bandwidth (when transferring) and storage usage.
 
 ## Management
 
