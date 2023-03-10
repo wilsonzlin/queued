@@ -49,7 +49,7 @@ async fn start_server_loop(
   port: u16,
   available: Mutex<AvailableMessages>,
   device: SeekableAsyncFile,
-  layout: Box<dyn StorageLayout + Send + Sync>,
+  layout: Arc<dyn StorageLayout + Send + Sync>,
   metrics: Arc<Metrics>,
   vacant: Mutex<VacantSlots>,
 ) {
@@ -144,10 +144,10 @@ async fn main() {
   )
   .await;
 
-  let mut layout: Box<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
-    Box::new(FixedSlotsLayout::new(device.clone(), device_size))
+  let mut layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
+    Arc::new(FixedSlotsLayout::new(device.clone(), device_size))
   } else {
-    Box::new(LogStructuredLayout::new(device.clone(), device_size))
+    Arc::new(LogStructuredLayout::new(device.clone(), device_size))
   };
 
   if cli.format {
@@ -158,7 +158,10 @@ async fn main() {
   };
 
   let load_started = Instant::now();
-  let LoadedData { available, vacant } = layout.load_data_from_device(metrics.clone()).await;
+  let LoadedData { available, vacant } = Arc::get_mut(&mut layout)
+    .unwrap()
+    .load_data_from_device(metrics.clone())
+    .await;
   println!(
     "Verified and loaded data on device in {:.2} seconds",
     load_started.elapsed().as_secs_f64()
@@ -171,7 +174,7 @@ async fn main() {
     cli.port,
     Mutex::new(available),
     device.clone(),
-    layout,
+    layout.clone(),
     metrics,
     Mutex::new(vacant),
   );
@@ -179,5 +182,6 @@ async fn main() {
   join! {
     server_fut,
     device.start_delayed_data_sync_background_loop(),
+    layout.start_background_loops(),
   };
 }

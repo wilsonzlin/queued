@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 pub struct Ctx {
   pub available: Mutex<AvailableMessages>,
   pub device: SeekableAsyncFile,
-  pub layout: Box<dyn StorageLayout + Send + Sync>,
+  pub layout: Arc<dyn StorageLayout + Send + Sync>,
   pub metrics: Arc<Metrics>,
   pub suspend_delete: AtomicBool,
   pub suspend_poll: AtomicBool,

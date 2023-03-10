@@ -40,6 +40,8 @@ pub struct MessageCreation {
 pub trait StorageLayout {
   fn max_contents_len(&self) -> u64;
 
+  async fn start_background_loops(&self) -> ();
+
   async fn format_device(&self) -> ();
 
   // It's safe to assume that this method will only ever be called at most once for the entire lifetime of this StorageLayout, so it's safe to mutate internal state and "initialise" it.

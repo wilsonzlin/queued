@@ -15,6 +15,7 @@
 
 - Cannot resize easily.
 - Space could be quickly used up under heavy load, especially by operations that would otherwise mutate or free space.
+- Fragmentation from interspersed log entries for the same messages makes it more difficult to free space from the head.
 
 ### Implementation
 

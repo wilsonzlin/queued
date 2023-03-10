@@ -13,15 +13,23 @@ use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::stream::iter;
+use futures::Future;
+use futures::StreamExt;
 use num_enum::TryFromPrimitive;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Waker;
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 
-#[derive(TryFromPrimitive)]
+#[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum LogEntryType {
   Create,
@@ -35,18 +43,20 @@ const STATE_SIZE: u64 = STATE_OFFSETOF_TAIL + 8;
 
 const LOGENT_START: u64 = STATE_SIZE;
 
-const LOGENT_CREATE_OFFSETOF_INDEX: u64 = 0;
+const LOGENT_OFFSETOF_TYPE: u64 = 0;
+
+const LOGENT_CREATE_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
 const LOGENT_CREATE_OFFSETOF_CREATED_TS: u64 = LOGENT_CREATE_OFFSETOF_INDEX + 4;
 const LOGENT_CREATE_OFFSETOF_VISIBLE_TS: u64 = LOGENT_CREATE_OFFSETOF_CREATED_TS + 8;
 const LOGENT_CREATE_OFFSETOF_LEN: u64 = LOGENT_CREATE_OFFSETOF_VISIBLE_TS + 8;
 const LOGENT_CREATE_OFFSETOF_CONTENTS: u64 = LOGENT_CREATE_OFFSETOF_LEN + 2;
 
-const LOGENT_POLL_OFFSETOF_INDEX: u64 = 0;
+const LOGENT_POLL_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
 const LOGENT_POLL_OFFSETOF_POLL_TAG: u64 = LOGENT_POLL_OFFSETOF_INDEX + 4;
 const LOGENT_POLL_OFFSETOF_VISIBLE_TS: u64 = LOGENT_POLL_OFFSETOF_POLL_TAG + 30;
 const LOGENT_POLL_SIZE: u64 = LOGENT_POLL_OFFSETOF_VISIBLE_TS + 8;
 
-const LOGENT_DELETE_OFFSETOF_INDEX: u64 = 0;
+const LOGENT_DELETE_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
 const LOGENT_DELETE_SIZE: u64 = LOGENT_DELETE_OFFSETOF_INDEX + 4;
 
 #[derive(Default)]
@@ -57,12 +67,36 @@ struct MessageState {
   poll_count: u32,
 }
 
+#[derive(Debug)]
+struct TailBumpCommitFutureState {
+  completed: bool,
+  waker: Option<Waker>,
+}
+
+struct TailBumpCommitFuture {
+  shared_state: Arc<std::sync::Mutex<TailBumpCommitFutureState>>,
+}
+
+impl Future for TailBumpCommitFuture {
+  type Output = ();
+
+  fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    let mut shared_state = self.shared_state.lock().unwrap();
+    if shared_state.completed {
+      Poll::Ready(())
+    } else {
+      shared_state.waker = Some(cx.waker().clone());
+      Poll::Pending
+    }
+  }
+}
+
 #[derive(Default)]
 struct LogState {
   head: u64,
   tail: u64,
   // This is to prevent the scenario where a write at a later offset (i.e. subsequent request B) finishes before a write at an earlier offset (i.e. earlier request A); we can't immediately update the tail on disk after writing B because it would include A, which hasn't been synced yet.
-  pending_tail_bumps: BTreeMap<u64, bool>,
+  pending_tail_bumps: BTreeMap<u64, Option<Arc<std::sync::Mutex<TailBumpCommitFutureState>>>>,
 }
 
 pub struct LogStructuredLayout {
@@ -101,44 +135,76 @@ impl LogStructuredLayout {
     // TODO Check if overlaps with head.
     state.tail += usage;
     let new_tail = state.tail;
-    state.pending_tail_bumps.insert(new_tail, false);
+    let None = state.pending_tail_bumps.insert(new_tail, None) else {
+      unreachable!();
+    };
     TailBump {
       acquired_actual_offset: self.actual_offset(tail),
       uncommitted_virtual_offset: new_tail,
     }
   }
 
-  async fn commit_tail_bump(&self, bump: TailBump) {
-    // It's fine performance-wise to hold the lock, even while asynchronously writing, since only one write is allowed to be happening to this shared location at one time anyway.
-    // TODO This still prevents others from getting a bump (not just commit_tail_bump).
-    let mut state = self.log_state.lock().await;
-    *state
-      .pending_tail_bumps
-      .get_mut(&bump.uncommitted_virtual_offset)
-      .unwrap() = true;
-
-    let mut new_tail_to_write = None;
+  async fn start_background_tail_bump_commit_loop(&self) {
     loop {
-      let Some(e) = state.pending_tail_bumps.first_entry() else {
-        break;
-      };
-      if !e.get() {
-        break;
-      };
-      let (k, _) = e.remove_entry();
-      new_tail_to_write = Some(k);
-    }
+      sleep(std::time::Duration::from_micros(200)).await;
 
-    if let Some(new_tail_to_write) = new_tail_to_write {
-      // TODO Journal this.
-      self
-        .device
-        .write_at_with_delayed_sync(vec![WriteRequest {
-          data: new_tail_to_write.to_be_bytes().to_vec(),
-          offset: STATE_OFFSETOF_TAIL,
-        }])
-        .await;
+      let mut to_resolve = vec![];
+      let mut new_tail_to_write = None;
+      {
+        let mut state = self.log_state.lock().await;
+        loop {
+          let Some(e) = state.pending_tail_bumps.first_entry() else {
+            break;
+          };
+          if e.get().is_none() {
+            break;
+          };
+          let (k, fut_state) = e.remove_entry();
+          to_resolve.push(fut_state.unwrap());
+          new_tail_to_write = Some(k);
+        }
+      };
+
+      if let Some(new_tail_to_write) = new_tail_to_write {
+        // TODO Journal this.
+        self
+          .device
+          .write_at_with_delayed_sync(vec![WriteRequest {
+            data: new_tail_to_write.to_be_bytes().to_vec(),
+            offset: STATE_OFFSETOF_TAIL,
+          }])
+          .await;
+
+        for ft in to_resolve {
+          let mut ft = ft.lock().unwrap();
+          ft.completed = true;
+          if let Some(waker) = ft.waker.take() {
+            waker.wake();
+          };
+        }
+      };
+    }
+  }
+
+  async fn commit_tail_bump(&self, bump: TailBump) {
+    let fut_state = Arc::new(std::sync::Mutex::new(TailBumpCommitFutureState {
+      completed: false,
+      waker: None,
+    }));
+
+    {
+      let mut state = self.log_state.lock().await;
+
+      *state
+        .pending_tail_bumps
+        .get_mut(&bump.uncommitted_virtual_offset)
+        .unwrap() = Some(fut_state.clone());
     };
+
+    TailBumpCommitFuture {
+      shared_state: fut_state,
+    }
+    .await;
   }
 }
 
@@ -146,6 +212,10 @@ impl LogStructuredLayout {
 impl StorageLayout for LogStructuredLayout {
   fn max_contents_len(&self) -> u64 {
     u64::MAX
+  }
+
+  async fn start_background_loops(&self) {
+    self.start_background_tail_bump_commit_loop().await;
   }
 
   async fn format_device(&self) {
@@ -181,7 +251,6 @@ impl StorageLayout for LogStructuredLayout {
           .await[0],
       )
       .unwrap();
-      virtual_offset += 1;
       match typ {
         LogEntryType::Create => {
           let raw = self
@@ -240,8 +309,8 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn delete_message(&self, index: u32) {
-    let mut data = vec![0u8; as_usize!(LOGENT_DELETE_SIZE) + 1];
-    data[0] = LogEntryType::Delete as u8;
+    let mut data = vec![0u8; as_usize!(LOGENT_DELETE_SIZE)];
+    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Delete as u8;
     u64_slice_write(
       &mut data,
       LOGENT_DELETE_OFFSETOF_INDEX,
@@ -285,8 +354,8 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn update_message_metadata(&self, index: u32, update: MessageMetadataUpdate) {
-    let mut data = vec![0u8; as_usize!(LOGENT_POLL_SIZE) + 1];
-    data[0] = LogEntryType::Poll as u8;
+    let mut data = vec![0u8; as_usize!(LOGENT_POLL_SIZE)];
+    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Poll as u8;
     u64_slice_write(&mut data, LOGENT_POLL_OFFSETOF_INDEX, &index.to_be_bytes());
     u64_slice_write(&mut data, LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
     u64_slice_write(
@@ -307,7 +376,8 @@ impl StorageLayout for LogStructuredLayout {
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) {
     let mut writes = vec![];
-    let mut last_bump = None;
+    // We must commit all bumps, not just the last/largest/highest one, due to the way our algorithm currently works.
+    let mut bumps = vec![];
     for MessageCreation {
       index,
       visible_time,
@@ -315,8 +385,8 @@ impl StorageLayout for LogStructuredLayout {
       ..
     } in creations
     {
-      let mut data = vec![0u8; as_usize!(LOGENT_CREATE_OFFSETOF_CONTENTS) + 1 + contents.len()];
-      data[0] = LogEntryType::Create as u8;
+      let mut data = vec![0u8; as_usize!(LOGENT_CREATE_OFFSETOF_CONTENTS) + contents.len()];
+      data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Create as u8;
       u64_slice_write(
         &mut data,
         LOGENT_CREATE_OFFSETOF_INDEX,
@@ -342,15 +412,19 @@ impl StorageLayout for LogStructuredLayout {
         LOGENT_CREATE_OFFSETOF_CONTENTS,
         contents.as_bytes(),
       );
-      let bump = self.bump_tail(data.len().try_into().unwrap()).await;
+      let bump = self.bump_tail(data.len()).await;
       writes.push(WriteRequest {
         data,
         offset: bump.acquired_actual_offset,
       });
-      last_bump = Some(bump);
+      bumps.push(bump);
     }
 
     self.device.write_at_with_delayed_sync(writes).await;
-    self.commit_tail_bump(last_bump.unwrap()).await;
+    iter(bumps)
+      .for_each_concurrent(None, |bump| async move {
+        self.commit_tail_bump(bump).await;
+      })
+      .await;
   }
 }

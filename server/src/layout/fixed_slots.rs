@@ -79,6 +79,8 @@ impl StorageLayout for FixedSlotsLayout {
     MESSAGE_SLOT_CONTENTS_LEN_MAX
   }
 
+  async fn start_background_loops(&self) {}
+
   async fn format_device(&self) {
     let mut template_base_padded = vec![0u8; as_usize!(SLOT_LEN)];
     template_base_padded[..as_usize!(SLOT_FIXED_FIELDS_LEN)].copy_from_slice(&SLOT_VACANT_TEMPLATE);
