@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct EndpointDeleteInput {
-  index: u32,
+  id: u64,
   poll_tag: String,
 }
 
@@ -35,12 +35,12 @@ pub async fn endpoint_delete(
   verify_poll_tag(
     &ctx,
     &ctx.metrics.missing_delete_counter,
-    req.index,
+    req.id,
     &req.poll_tag,
   )
   .await?;
 
-  if ctx.invisible.lock().await.remove(req.index).is_none() {
+  if ctx.invisible.lock().await.remove(req.id).is_none() {
     ctx
       .metrics
       .missing_delete_counter
@@ -49,12 +49,7 @@ pub async fn endpoint_delete(
     return Err((StatusCode::NOT_FOUND, "message not found"));
   };
 
-  ctx.layout.delete_message(req.index).await;
-
-  {
-    let mut vacant = ctx.vacant.lock().await;
-    vacant.add(req.index);
-  };
+  ctx.layout.delete_message(req.id).await;
 
   ctx
     .metrics

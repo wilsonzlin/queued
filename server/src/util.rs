@@ -44,6 +44,10 @@ pub fn read_u32(slice: &[u8], offset: u64) -> u32 {
   u32::from_be_bytes(u64_slice(slice, offset, 4).try_into().unwrap())
 }
 
+pub fn read_u64(slice: &[u8], offset: u64) -> u64 {
+  u64::from_be_bytes(u64_slice(slice, offset, 8).try_into().unwrap())
+}
+
 pub fn read_ts(slice: &[u8], offset: u64) -> DateTime<Utc> {
   Utc
     .timestamp_millis_opt(

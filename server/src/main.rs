@@ -4,7 +4,10 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub mod ctx;
 pub mod endpoint;
+pub mod http;
+pub mod id_gen;
 pub mod invisible;
+pub mod journal;
 pub mod layout;
 pub mod metrics;
 pub mod throttler;
@@ -12,93 +15,31 @@ pub mod util;
 pub mod vacant;
 pub mod visible;
 
+use crate::http::start_http_server_loop;
+use crate::id_gen::IdGenerator;
+use crate::journal::Journal;
 use crate::layout::fixed_slots::FixedSlotsLayout;
 use crate::layout::log_structured::LogStructuredLayout;
 use crate::util::get_device_size;
-use axum::extract::DefaultBodyLimit;
-use axum::routing::get;
-use axum::routing::post;
-use axum::Router;
-use axum::Server;
 use clap::arg;
 use clap::command;
 use clap::Parser;
-use ctx::Ctx;
-use endpoint::delete::endpoint_delete;
-use endpoint::healthz::endpoint_healthz;
-use endpoint::metrics::endpoint_metrics;
-use endpoint::poll::endpoint_poll;
-use endpoint::push::endpoint_push;
-use endpoint::suspend::endpoint_get_suspend;
-use endpoint::suspend::endpoint_post_suspend;
-use endpoint::throttle::endpoint_get_throttle;
-use endpoint::throttle::endpoint_post_throttle;
-use endpoint::update::endpoint_update;
-use invisible::InvisibleMessages;
 use layout::LoadedData;
 use layout::StorageLayout;
 use metrics::Metrics;
 use seekable_async_file::SeekableAsyncFile;
 use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use vacant::VacantSlots;
-use visible::VisibleMessages;
 
-async fn start_server_loop(
-  interface: Ipv4Addr,
-  port: u16,
-  invisible: Arc<Mutex<InvisibleMessages>>,
-  visible: Arc<VisibleMessages>,
-  device: SeekableAsyncFile,
-  layout: Arc<dyn StorageLayout + Send + Sync>,
-  metrics: Arc<Metrics>,
-  vacant: Mutex<VacantSlots>,
-) {
-  let ctx = Arc::new(Ctx {
-    device,
-    invisible,
-    layout,
-    metrics,
-    suspend_delete: AtomicBool::new(false),
-    suspend_poll: AtomicBool::new(false),
-    suspend_push: AtomicBool::new(false),
-    suspend_update: AtomicBool::new(false),
-    throttler: Mutex::new(None),
-    visible,
-    vacant,
-  });
-
-  let app = Router::new()
-    .route("/delete", post(endpoint_delete))
-    .route("/healthz", get(endpoint_healthz))
-    .route("/metrics", get(endpoint_metrics))
-    .route("/poll", post(endpoint_poll))
-    .route("/push", post(endpoint_push))
-    .route(
-      "/suspend",
-      get(endpoint_get_suspend).post(endpoint_post_suspend),
-    )
-    .route(
-      "/throttle",
-      get(endpoint_get_throttle).post(endpoint_post_throttle),
-    )
-    .route("/update", post(endpoint_update))
-    .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
-    .with_state(ctx.clone());
-
-  let addr = SocketAddr::from((interface, port));
-
-  Server::bind(&addr)
-    .serve(app.into_make_service())
-    .await
-    .unwrap();
-}
+const DELAYED_SYNC_US: u64 = 100;
+const OFFSETOF_JOURNAL: u64 = 0;
+const JOURNAL_CAPACITY: u64 = 1024 * 1024;
+const OFFSETOF_ID_GEN: u64 = OFFSETOF_JOURNAL + JOURNAL_CAPACITY;
+const OFFSETOF_DATA: u64 = OFFSETOF_ID_GEN + 8;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -136,8 +77,6 @@ struct Cli {
   port: u16,
 }
 
-const DELAYED_SYNC_US: u64 = 100;
-
 #[tokio::main]
 async fn main() {
   let cli = Cli::parse();
@@ -159,10 +98,26 @@ async fn main() {
   )
   .await;
 
+  let journal = Arc::new(Journal::new(
+    device.clone(),
+    OFFSETOF_JOURNAL,
+    JOURNAL_CAPACITY,
+  ));
+  let id_gen = IdGenerator::load_from_disk(device.clone(), journal.clone(), OFFSETOF_ID_GEN).await;
+
   let layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
-    Arc::new(FixedSlotsLayout::new(device.clone(), device_size))
+    Arc::new(FixedSlotsLayout::new(
+      device.clone(),
+      device_size,
+      OFFSETOF_DATA,
+      metrics.clone(),
+    ))
   } else {
-    Arc::new(LogStructuredLayout::new(device.clone(), device_size))
+    Arc::new(LogStructuredLayout::new(
+      device.clone(),
+      device_size,
+      OFFSETOF_DATA,
+    ))
   };
 
   if cli.format {
@@ -173,26 +128,26 @@ async fn main() {
   };
 
   let load_started = Instant::now();
-  let LoadedData { available, vacant } = layout.load_data_from_device(metrics.clone()).await;
+  let LoadedData { invisible, visible } = layout.load_data_from_device(metrics.clone()).await;
   println!(
     "Verified and loaded data on device in {:.2} seconds",
     load_started.elapsed().as_secs_f64()
   );
-  println!("Vacant slots: {}", vacant.count());
-  println!("Available messages: {}", available.len());
+  println!("Invisible messages: {}", invisible.len());
+  println!("Visible messages: {}", visible.len());
 
-  let invisible = Arc::new(Mutex::new(available));
-  let visible = Arc::new(VisibleMessages::new(metrics.clone()));
+  let invisible = Arc::new(Mutex::new(invisible));
+  let visible = Arc::new(visible);
 
-  let server_fut = start_server_loop(
+  let server_fut = start_http_server_loop(
     cli.interface,
     cli.port,
     invisible.clone(),
     visible.clone(),
+    id_gen,
     device.clone(),
     layout.clone(),
     metrics,
-    Mutex::new(vacant),
   );
 
   join! {
@@ -200,5 +155,6 @@ async fn main() {
     device.start_delayed_data_sync_background_loop(),
     layout.start_background_loops(),
     visible.start_invisible_consumption_background_loop(invisible.clone()),
+    journal.start_commit_background_loop(),
   };
 }

@@ -9,15 +9,23 @@ use tokio::time::sleep;
 
 pub struct VisibleMessages {
   metrics: Arc<Metrics>,
-  messages: Mutex<LinkedList<u32>>,
+  messages: Mutex<LinkedList<u64>>,
 }
 
 impl VisibleMessages {
-  pub fn new(metrics: Arc<Metrics>) -> Self {
+  pub fn new_with_list(messages: LinkedList<u64>, metrics: Arc<Metrics>) -> Self {
     Self {
       metrics,
-      messages: Mutex::new(LinkedList::new()),
+      messages: Mutex::new(messages),
     }
+  }
+
+  pub fn new(metrics: Arc<Metrics>) -> Self {
+    Self::new_with_list(LinkedList::new(), metrics)
+  }
+
+  pub fn len(&self) -> usize {
+    self.messages.blocking_lock().len()
   }
 
   pub async fn start_invisible_consumption_background_loop(
@@ -30,8 +38,8 @@ impl VisibleMessages {
       let now = Utc::now();
       let mut invisible = invisible.lock().await;
       let mut messages = self.messages.lock().await;
-      while let Some(index) = invisible.remove_earliest_up_to(&now) {
-        messages.push_back(index);
+      while let Some(id) = invisible.remove_earliest_up_to(&now) {
+        messages.push_back(id);
       }
       self
         .metrics
@@ -40,7 +48,7 @@ impl VisibleMessages {
     }
   }
 
-  pub async fn pop_next(&self) -> Option<u32> {
+  pub async fn pop_next(&self) -> Option<u64> {
     // Let background loop update metrics to increase performance.
     self.messages.lock().await.pop_front()
   }

@@ -23,7 +23,7 @@ pub struct EndpointPollInput {
 pub struct EndpointPollOutputMessage {
   contents: String,
   created: DateTime<Utc>,
-  index: u32,
+  id: u64,
   poll_count: u32,
   poll_tag: String,
 }
@@ -64,7 +64,7 @@ pub async fn endpoint_poll(
 
   let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  let Some(index) = ctx.visible.pop_next().await else {
+  let Some(id) = ctx.visible.pop_next().await else {
     ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
     return Ok(Json(EndpointPollOutput { message: None }));
   };
@@ -77,21 +77,20 @@ pub async fn endpoint_poll(
     contents,
     created,
     poll_count,
-  } = ctx.layout.read_message(index).await;
+  } = ctx.layout.read_message(id).await;
   let new_poll_count = poll_count + 1;
 
   // Update data.
   ctx
     .layout
-    .mark_as_polled(index, MessagePoll {
+    .mark_as_polled(id, MessagePoll {
       poll_tag,
-      created_time: created,
       visible_time,
       poll_count: new_poll_count,
     })
     .await;
 
-  ctx.invisible.lock().await.insert(index, visible_time);
+  ctx.invisible.lock().await.insert(id, visible_time);
 
   ctx
     .metrics
@@ -102,7 +101,7 @@ pub async fn endpoint_poll(
     message: Some(EndpointPollOutputMessage {
       contents,
       created,
-      index,
+      id,
       poll_count: new_poll_count,
       poll_tag: poll_tag_hex,
     }),

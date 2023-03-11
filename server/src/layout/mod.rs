@@ -1,6 +1,7 @@
 use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
 use crate::vacant::VacantSlots;
+use crate::visible::VisibleMessages;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
@@ -10,8 +11,8 @@ pub mod fixed_slots;
 pub mod log_structured;
 
 pub struct LoadedData {
-  pub available: InvisibleMessages,
-  pub vacant: VacantSlots,
+  pub invisible: InvisibleMessages,
+  pub visible: VisibleMessages,
 }
 
 pub struct MessageOnDisk {
@@ -22,13 +23,12 @@ pub struct MessageOnDisk {
 
 pub struct MessagePoll {
   pub poll_tag: Vec<u8>,
-  pub created_time: DateTime<Utc>, // This should simply be repeated from the existing value; any change will NOT get persisted.
   pub visible_time: DateTime<Utc>,
   pub poll_count: u32,
 }
 
 pub struct MessageCreation {
-  pub index: u32,
+  pub id: u64,
   pub visible_time: DateTime<Utc>,
   pub contents: String,
 }
@@ -44,15 +44,15 @@ pub trait StorageLayout {
   // It's safe to assume that this method will only ever be called at most once for the entire lifetime of this StorageLayout, so it's safe to mutate internal state and "initialise" it.
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData;
 
-  async fn read_poll_tag(&self, index: u32) -> Vec<u8>;
+  async fn read_poll_tag(&self, id: u64) -> Vec<u8>;
 
-  async fn update_visibility_time(&self, index: u32, visible_time: DateTime<Utc>) -> ();
+  async fn update_visibility_time(&self, id: u64, visible_time: DateTime<Utc>) -> ();
 
-  async fn delete_message(&self, index: u32) -> ();
+  async fn delete_message(&self, id: u64) -> ();
 
-  async fn read_message(&self, index: u32) -> MessageOnDisk;
+  async fn read_message(&self, id: u64) -> MessageOnDisk;
 
-  async fn mark_as_polled(&self, index: u32, update: MessagePoll) -> ();
+  async fn mark_as_polled(&self, id: u64, update: MessagePoll) -> ();
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) -> ();
 }

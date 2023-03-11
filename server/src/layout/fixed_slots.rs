@@ -9,19 +9,23 @@ use crate::util::as_usize;
 use crate::util::read_ts;
 use crate::util::read_u16;
 use crate::util::read_u32;
+use crate::util::read_u64;
 use crate::util::repeated_copy;
 use crate::util::u64_slice;
 use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
+use crate::visible::VisibleMessages;
 use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
+use dashmap::DashMap;
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::cmp::min;
+use std::collections::LinkedList;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -38,7 +42,8 @@ const SLOT_LEN: u64 = 1024;
 const SLOT_OFFSETOF_HASH: u64 = 0;
 const SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS: u64 = SLOT_OFFSETOF_HASH + 32;
 const SLOT_OFFSETOF_STATE: u64 = SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS + 1;
-const SLOT_OFFSETOF_POLL_TAG: u64 = SLOT_OFFSETOF_STATE + 1;
+const SLOT_OFFSETOF_ID: u64 = SLOT_OFFSETOF_STATE + 1;
+const SLOT_OFFSETOF_POLL_TAG: u64 = SLOT_OFFSETOF_ID + 8;
 const SLOT_OFFSETOF_CREATED_TS: u64 = SLOT_OFFSETOF_POLL_TAG + 30;
 const SLOT_OFFSETOF_VISIBLE_TS: u64 = SLOT_OFFSETOF_CREATED_TS + 8;
 const SLOT_OFFSETOF_POLL_COUNT: u64 = SLOT_OFFSETOF_VISIBLE_TS + 8;
@@ -56,21 +61,45 @@ lazy_static! {
   };
 }
 
-fn slot_offset(index: u32) -> u64 {
-  u64::from(index) * SLOT_LEN
+#[derive(Default)]
+struct MessageState {
+  slot_index: u32,
 }
 
 pub struct FixedSlotsLayout {
   device: SeekableAsyncFile,
+  device_offset: u64,
   device_size: u64,
+  message_state: DashMap<u64, MessageState>,
+  vacant: Arc<Mutex<VacantSlots>>,
 }
 
 impl FixedSlotsLayout {
-  pub fn new(device: SeekableAsyncFile, device_size: u64) -> Self {
+  pub fn new(
+    device: SeekableAsyncFile,
+    device_offset: u64,
+    device_size: u64,
+    metrics: Arc<Metrics>,
+  ) -> Self {
     Self {
       device,
+      device_offset,
       device_size,
+      message_state: DashMap::new(),
+      vacant: Arc::new(Mutex::new(VacantSlots::new(metrics))),
     }
+  }
+}
+
+impl FixedSlotsLayout {
+  fn slot_offset(&self, index: u32) -> u64 {
+    self.device_offset + (u64::from(index) * SLOT_LEN)
+  }
+
+  fn slot_index(&self, offset: u64) -> u32 {
+    ((offset - self.device_offset) / SLOT_LEN)
+      .try_into()
+      .unwrap()
   }
 }
 
@@ -106,14 +135,17 @@ impl StorageLayout for FixedSlotsLayout {
   }
 
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
-    let available = Arc::new(Mutex::new(InvisibleMessages::new(metrics.clone())));
-    let vacant = Arc::new(Mutex::new(VacantSlots::new(metrics.clone())));
+    let now = Utc::now();
+    let invisible = Arc::new(Mutex::new(InvisibleMessages::new(metrics.clone())));
+    // Since we guarantee that messages are polled in order of visibility time, we can't directly insert into VisibleMessages, we'll need to sort them first.
+    let visible_unsorted = Arc::new(Mutex::new(Vec::new()));
     let progress = Arc::new(AtomicU64::new(0));
 
     futures::stream::iter((0..self.device_size).step_by(as_usize!(SLOT_LEN)))
       .for_each_concurrent(None, |offset| {
-        let available = available.clone();
-        let vacant = vacant.clone();
+        let invisible = invisible.clone();
+        let visible_unsorted = visible_unsorted.clone();
+        let vacant = self.vacant.clone();
         let progress = progress.clone();
 
         async move {
@@ -150,14 +182,24 @@ impl StorageLayout for FixedSlotsLayout {
           }
 
           let state = SlotState::try_from(slot_data[as_usize!(SLOT_OFFSETOF_STATE)]).unwrap();
-          let index: u32 = (offset / SLOT_LEN).try_into().unwrap();
+          let slot_index = self.slot_index(offset);
+          let id = read_u64(&slot_data, SLOT_OFFSETOF_ID);
           match state {
             SlotState::Available => {
               let visible_time = read_ts(&slot_data, SLOT_OFFSETOF_VISIBLE_TS);
-              available.lock().await.insert(index, visible_time);
+              if visible_time <= now {
+                visible_unsorted.lock().await.push((id, visible_time));
+              } else {
+                invisible.lock().await.insert(id, visible_time);
+              };
+              let None = self.message_state.insert(id, MessageState {
+                slot_index,
+              }) else {
+                unreachable!();
+              };
             }
             SlotState::Vacant => {
-              vacant.lock().await.add(index);
+              vacant.lock().await.add(slot_index);
             }
           };
 
@@ -173,24 +215,33 @@ impl StorageLayout for FixedSlotsLayout {
       })
       .await;
 
-    let available = Arc::try_unwrap(available)
+    let mut visible_unsorted = Arc::try_unwrap(visible_unsorted)
       .unwrap_or_else(|_| unreachable!())
       .into_inner();
-    let vacant = Arc::try_unwrap(vacant)
+    visible_unsorted.sort_unstable_by_key(|(_, visible_ts)| *visible_ts);
+    let mut visible_list = LinkedList::new();
+    for (id, _) in visible_unsorted {
+      visible_list.push_back(id);
+    }
+
+    let invisible = Arc::try_unwrap(invisible)
       .unwrap_or_else(|_| unreachable!())
       .into_inner();
-    LoadedData { available, vacant }
+    let visible = VisibleMessages::new_with_list(visible_list, metrics.clone());
+    LoadedData { invisible, visible }
   }
 
-  async fn read_poll_tag(&self, index: u32) -> Vec<u8> {
+  async fn read_poll_tag(&self, id: u64) -> Vec<u8> {
+    let index = self.message_state.get(&id).unwrap().slot_index;
     self
       .device
-      .read_at(slot_offset(index) + SLOT_OFFSETOF_POLL_TAG, 30)
+      .read_at(self.slot_offset(index) + SLOT_OFFSETOF_POLL_TAG, 30)
       .await
   }
 
-  async fn update_visibility_time(&self, index: u32, visible_time: DateTime<Utc>) {
-    let slot_offset = slot_offset(index);
+  async fn update_visibility_time(&self, id: u64, visible_time: DateTime<Utc>) {
+    let index = self.message_state.get(&id).unwrap().slot_index;
+    let slot_offset = self.slot_offset(index);
     let mut slot_data = self.device.read_at(slot_offset, SLOT_LEN).await;
     let visible_time_bytes = visible_time.timestamp().to_be_bytes().to_vec();
     u64_slice_write(
@@ -215,18 +266,21 @@ impl StorageLayout for FixedSlotsLayout {
       .await;
   }
 
-  async fn delete_message(&self, index: u32) -> () {
+  async fn delete_message(&self, id: u64) -> () {
+    let index = self.message_state.remove(&id).unwrap().1.slot_index;
     self
       .device
       .write_at_with_delayed_sync(vec![WriteRequest {
         data: SLOT_VACANT_TEMPLATE.clone(),
-        offset: slot_offset(index),
+        offset: self.slot_offset(index),
       }])
       .await;
+    self.vacant.lock().await.add(index);
   }
 
-  async fn read_message(&self, index: u32) -> MessageOnDisk {
-    let slot_data = self.device.read_at(slot_offset(index), SLOT_LEN).await;
+  async fn read_message(&self, id: u64) -> MessageOnDisk {
+    let index = self.message_state.get(&id).unwrap().slot_index;
+    let slot_data = self.device.read_at(self.slot_offset(index), SLOT_LEN).await;
 
     let created = read_ts(&slot_data, SLOT_OFFSETOF_CREATED_TS);
     let poll_count = read_u32(&slot_data, SLOT_OFFSETOF_POLL_COUNT);
@@ -243,27 +297,25 @@ impl StorageLayout for FixedSlotsLayout {
 
   async fn mark_as_polled(
     &self,
-    index: u32,
+    id: u64,
     MessagePoll {
       poll_tag,
-      created_time,
       visible_time,
       poll_count,
     }: MessagePoll,
   ) {
+    let index = self.message_state.get(&id).unwrap().slot_index;
     // For efficiency, hash does not cover contents, as contents have already been durabilty persisted. This also saves wasting writes on rewriting contents.
-    let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
+    let mut slot_data = self
+      .device
+      .read_at(self.slot_offset(index), SLOT_FIXED_FIELDS_LEN)
+      .await;
 
     u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[0]);
     u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
       SlotState::Available as u8
     ]);
     u64_slice_write(&mut slot_data, SLOT_OFFSETOF_POLL_TAG, &poll_tag);
-    u64_slice_write(
-      &mut slot_data,
-      SLOT_OFFSETOF_CREATED_TS,
-      &created_time.timestamp().to_be_bytes(),
-    );
     u64_slice_write(
       &mut slot_data,
       SLOT_OFFSETOF_VISIBLE_TS,
@@ -281,25 +333,35 @@ impl StorageLayout for FixedSlotsLayout {
       .device
       .write_at_with_delayed_sync(vec![WriteRequest {
         data: slot_data,
-        offset: slot_offset(index),
+        offset: self.slot_offset(index),
       }])
       .await;
   }
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) {
+    let indices = self.vacant.lock().await.take_up_to_n(creations.len());
+    if indices.len() != creations.len() {
+      panic!("out of disk space");
+    };
+
     let mut writes = vec![];
-    for MessageCreation {
-      index,
-      contents,
-      visible_time,
-    } in creations
+    for (
+      i,
+      MessageCreation {
+        id,
+        contents,
+        visible_time,
+      },
+    ) in creations.into_iter().enumerate()
     {
+      let index = indices[i];
       let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN) + contents.len()];
 
       u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[1]);
       u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
         SlotState::Available as u8
       ]);
+      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_ID, &id.to_be_bytes());
       u64_slice_write(
         &mut slot_data,
         SLOT_OFFSETOF_CREATED_TS,
@@ -322,7 +384,7 @@ impl StorageLayout for FixedSlotsLayout {
 
       writes.push(WriteRequest {
         data: slot_data,
-        offset: slot_offset(index),
+        offset: self.slot_offset(index),
       });
     }
 

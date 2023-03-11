@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct EndpointUpdateInput {
-  index: u32,
+  id: u64,
   poll_tag: String,
   visibility_timeout_secs: i64,
 }
@@ -41,14 +41,14 @@ pub async fn endpoint_update(
   verify_poll_tag(
     &ctx,
     &ctx.metrics.missing_update_counter,
-    req.index,
+    req.id,
     &req.poll_tag,
   )
   .await?;
 
   let new_visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  if ctx.invisible.lock().await.remove(req.index).is_none() {
+  if ctx.invisible.lock().await.remove(req.id).is_none() {
     ctx
       .metrics
       .missing_update_counter
@@ -60,14 +60,10 @@ pub async fn endpoint_update(
   // Update data.
   ctx
     .layout
-    .update_visibility_time(req.index, new_visible_time)
+    .update_visibility_time(req.id, new_visible_time)
     .await;
 
-  ctx
-    .invisible
-    .lock()
-    .await
-    .insert(req.index, new_visible_time);
+  ctx.invisible.lock().await.insert(req.id, new_visible_time);
 
   ctx
     .metrics

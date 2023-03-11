@@ -26,7 +26,6 @@ pub struct EndpointPushInput {
 pub enum EndpointPushOutputErrorType {
   ContentsTooLarge,
   InvalidVisibilityTimeout,
-  QueueIsFull,
 }
 
 #[derive(Serialize)]
@@ -57,8 +56,8 @@ pub async fn endpoint_push(
 
   let mut errors = Vec::new();
 
-  let indices = ctx.vacant.lock().await.take_up_to_n(req.messages.len());
-
+  let n: u64 = req.messages.len().try_into().unwrap();
+  let base_id = ctx.id_gen.generate(n).await;
   let mut to_add = Vec::new();
   let mut creations = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
@@ -78,33 +77,25 @@ pub async fn endpoint_push(
       continue;
     };
 
-    if i >= indices.len() {
-      errors.push(EndpointPushOutputError {
-        index: i,
-        typ: EndpointPushOutputErrorType::QueueIsFull,
-      });
-      continue;
-    };
-
+    let id = base_id + u64::try_from(i).unwrap();
     let visible_time = Utc::now() + Duration::seconds(msg.visibility_timeout_secs);
 
-    let index = indices[i];
-
-    to_add.push((index, visible_time));
+    to_add.push((id, visible_time));
     creations.push(MessageCreation {
-      index,
+      id,
       contents: msg.contents,
       visible_time,
     });
   }
 
   ctx.layout.create_messages(creations).await;
+  ctx.id_gen.commit(base_id, n).await;
 
   // TODO Optimisation: push messages with 0 visibility timeout to visible list directly.
   {
     let mut invisible = ctx.invisible.lock().await;
-    for (index, visible_time) in to_add {
-      invisible.insert(index, visible_time);
+    for (id, visible_time) in to_add {
+      invisible.insert(id, visible_time);
     }
   };
 

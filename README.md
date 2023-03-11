@@ -37,7 +37,7 @@ queued --device /dev/my_block_device
 }
 // ✅ 200 OK
 {
-  "index": 190234
+  "id": 190234
 }
 
 
@@ -50,7 +50,7 @@ queued --device /dev/my_block_device
   "message": {
     "contents": "Hello, world!",
     "created": "2023-01-03T12:00:00Z",
-    "index": 190234,
+    "id": 190234,
     "poll_count": 1,
     "poll_tag": "f914659685fcea9d60"
   }
@@ -59,7 +59,7 @@ queued --device /dev/my_block_device
 
 // 🌐 POST localhost:3333/update
 {
-  "index": 190234,
+  "id": 190234,
   "poll_tag": "f914659685fcea9d60",
   "visibility_timeout_secs": 15
 }
@@ -69,7 +69,7 @@ queued --device /dev/my_block_device
 
 // 🌐 POST localhost:3333/delete
 {
-  "index": 190234,
+  "id": 190234,
   "poll_tag": "f914659685fcea9d60"
 }
 // ✅ 200 OK
@@ -226,7 +226,7 @@ queued_visible 4000000 1678525380549
 ## Important details
 
 - Messages are delivered in order of their visibility time. Messages visible at the same time may be delivered in any order. Messages will never be delivered before their visibility time, but may be delivered a few seconds later. Polled messages could be updated or deleted a few seconds after their visibility time for the same reason.
-- The index and poll tag values are opaque and should not be used as unique or ordered IDs.
+- The ID and poll tag values are unique and opaque.
 - If you require more than one queue (e.g. channels), run multiple servers.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.
 
