@@ -55,9 +55,13 @@ impl IdGenerator {
   }
 
   pub async fn start_background_commit_loop(&self) {
+    let mut committed = None;
     loop {
       sleep(std::time::Duration::from_micros(200)).await;
       let id = self.next.load(Ordering::Relaxed);
+      if Some(id) == committed {
+        continue;
+      };
       self
         .journal
         .write(self.device_offset, id.to_be_bytes().to_vec())
@@ -71,8 +75,9 @@ impl IdGenerator {
         if *e.key() > id || e.get().is_none() {
           break;
         };
-        e.get().as_ref().unwrap().signal();
+        e.remove_entry().1.unwrap().signal();
       }
+      committed = Some(id);
     }
   }
 }

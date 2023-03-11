@@ -229,6 +229,7 @@ queued_visible 4000000 1678525380549
 - The ID and poll tag values are unique and opaque.
 - If you require more than one queue (e.g. channels), run multiple servers.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.
+- The process will exit when disk space is exhausted.
 
 ## Development
 

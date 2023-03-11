@@ -109,15 +109,15 @@ async fn main() {
   let layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
     Arc::new(FixedSlotsLayout::new(
       device.clone(),
-      device_size,
       OFFSETOF_DATA,
+      device_size,
       metrics.clone(),
     ))
   } else {
     Arc::new(LogStructuredLayout::new(
       device.clone(),
-      device_size,
       OFFSETOF_DATA,
+      device_size,
       journal.clone(),
     ))
   };
@@ -126,6 +126,7 @@ async fn main() {
     journal.format_device().await;
     id_gen.format_device(device.clone()).await;
     layout.format_device().await;
+    device.sync_data().await;
     println!("Formatted device");
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
@@ -140,7 +141,7 @@ async fn main() {
     load_started.elapsed().as_secs_f64()
   );
   println!("Invisible messages: {}", invisible.len());
-  println!("Visible messages: {}", visible.len());
+  println!("Visible messages: {}", visible.len().await);
 
   let invisible = Arc::new(Mutex::new(invisible));
   let visible = Arc::new(visible);

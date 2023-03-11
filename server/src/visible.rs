@@ -24,8 +24,8 @@ impl VisibleMessages {
     Self::new_with_list(LinkedList::new(), metrics)
   }
 
-  pub fn len(&self) -> usize {
-    self.messages.blocking_lock().len()
+  pub async fn len(&self) -> usize {
+    self.messages.lock().await.len()
   }
 
   pub async fn start_invisible_consumption_background_loop(

@@ -116,9 +116,12 @@ impl LogStructuredLayout {
     }
   }
 
+  fn reserved_size(&self) -> u64 {
+    self.device_offset + LOGENT_START
+  }
+
   fn physical_offset(&self, virtual_offset: u64) -> u64 {
-    let reserved = self.device_offset + LOGENT_START;
-    reserved + (virtual_offset % (self.device_size - reserved))
+    self.reserved_size() + (virtual_offset % (self.device_size - self.reserved_size()))
   }
 
   fn update_message_state_on_create(&self, id: u64, physical_offset: u64) {
@@ -155,13 +158,13 @@ impl LogStructuredLayout {
         // Write after releasing lock (performance) and checking tail >= head (safety).
         write_filler_at = Some(physical_offset);
         let filler = self.device_size - physical_offset;
-        physical_offset += filler;
+        physical_offset = self.reserved_size();
         state.tail += filler;
       };
 
       state.tail += usage;
       let new_tail = state.tail;
-      if new_tail < state.head {
+      if new_tail - state.head > self.device_size - self.reserved_size() {
         panic!("out of storage space");
       };
 
@@ -172,6 +175,7 @@ impl LogStructuredLayout {
     };
 
     if let Some(write_filler_at) = write_filler_at {
+      // TODO Prove safety.
       self
         .device
         .write_at(write_filler_at, vec![LogEntryType::DummyFiller as u8])
@@ -257,11 +261,17 @@ impl StorageLayout for LogStructuredLayout {
   async fn format_device(&self) {
     self
       .device
-      .write_at(STATE_OFFSETOF_HEAD, 0u64.to_be_bytes().to_vec())
+      .write_at(
+        self.device_offset + STATE_OFFSETOF_HEAD,
+        0u64.to_be_bytes().to_vec(),
+      )
       .await;
     self
       .device
-      .write_at(STATE_OFFSETOF_TAIL, 0u64.to_be_bytes().to_vec())
+      .write_at(
+        self.device_offset + STATE_OFFSETOF_TAIL,
+        0u64.to_be_bytes().to_vec(),
+      )
       .await;
   }
 
@@ -269,8 +279,14 @@ impl StorageLayout for LogStructuredLayout {
     // Since we guarantee that messages are polled in order of visibility time, we can't directly insert into VisibleMessages, we'll need to sort them first. Note that an earlier poll can make an earlier message have a visibility timeout later than a later message, so we can't use our log structured layout to our advantage here, nor directly insert into InvisibleMessages either.
     let mut messages = HashMap::<u64, DateTime<Utc>>::new();
 
-    let head = self.device.read_u64_at(STATE_OFFSETOF_HEAD).await;
-    let tail = self.device.read_u64_at(STATE_OFFSETOF_TAIL).await;
+    let head = self
+      .device
+      .read_u64_at(self.device_offset + STATE_OFFSETOF_HEAD)
+      .await;
+    let tail = self
+      .device
+      .read_u64_at(self.device_offset + STATE_OFFSETOF_TAIL)
+      .await;
     {
       let mut log_state = self.log_state.lock().await;
       log_state.head = head;

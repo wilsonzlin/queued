@@ -26,8 +26,6 @@ use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::cmp::min;
 use std::collections::LinkedList;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -97,6 +95,7 @@ impl FixedSlotsLayout {
   }
 
   fn slot_index(&self, offset: u64) -> u32 {
+    assert_eq!((offset - self.device_offset) % SLOT_LEN, 0);
     ((offset - self.device_offset) / SLOT_LEN)
       .try_into()
       .unwrap()
@@ -139,14 +138,12 @@ impl StorageLayout for FixedSlotsLayout {
     let invisible = Arc::new(Mutex::new(InvisibleMessages::new(metrics.clone())));
     // Since we guarantee that messages are polled in order of visibility time, we can't directly insert into VisibleMessages, we'll need to sort them first.
     let visible_unsorted = Arc::new(Mutex::new(Vec::new()));
-    let progress = Arc::new(AtomicU64::new(0));
 
-    futures::stream::iter((0..self.device_size).step_by(as_usize!(SLOT_LEN)))
+    futures::stream::iter((self.device_offset..self.device_size).step_by(as_usize!(SLOT_LEN)))
       .for_each_concurrent(None, |offset| {
         let invisible = invisible.clone();
         let visible_unsorted = visible_unsorted.clone();
         let vacant = self.vacant.clone();
-        let progress = progress.clone();
 
         async move {
           let mut slot_data = self.device.read_at(offset, SLOT_LEN).await;
@@ -201,15 +198,6 @@ impl StorageLayout for FixedSlotsLayout {
             SlotState::Vacant => {
               vacant.lock().await.add(slot_index);
             }
-          };
-
-          // Use a counter instead of `offset / device_size` as slots are processed out of order.
-          let completed = progress.fetch_add(1, Ordering::Relaxed);
-          if completed % 4194304 == 0 {
-            println!(
-              "Loaded {:.2}%",
-              completed as f64 / (self.device_size / SLOT_LEN) as f64 * 100.0
-            );
           };
         }
       })
