@@ -108,7 +108,7 @@ Set a property to `true` to disable that endpoint, and `false` to re-enable it. 
 {
   "throttle": {
     "max_polls_per_time_window": 100,
-    "time_window_sec": 60,
+    "time_window_sec": 60
   }
 }
 ```
