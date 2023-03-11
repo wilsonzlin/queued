@@ -1,6 +1,5 @@
 use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
-use crate::vacant::VacantSlots;
 use crate::visible::VisibleMessages;
 use async_trait::async_trait;
 use chrono::DateTime;

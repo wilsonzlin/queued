@@ -10,7 +10,6 @@ use crate::util::read_ts;
 use crate::util::read_u16;
 use crate::util::read_u64;
 use crate::util::u64_slice_write;
-use crate::vacant::VacantSlots;
 use crate::visible::VisibleMessages;
 use async_trait::async_trait;
 use chrono::DateTime;

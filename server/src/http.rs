@@ -13,7 +13,6 @@ use crate::id_gen::IdGenerator;
 use crate::invisible::InvisibleMessages;
 use crate::layout::StorageLayout;
 use crate::metrics::Metrics;
-use crate::vacant::VacantSlots;
 use crate::visible::VisibleMessages;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::get;

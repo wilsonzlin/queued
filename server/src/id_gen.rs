@@ -1,6 +1,4 @@
 use crate::journal::Journal;
-use futures::stream::iter;
-use futures::StreamExt;
 use seekable_async_file::SeekableAsyncFile;
 use signal_future::SignalFuture;
 use signal_future::SignalFutureController;
