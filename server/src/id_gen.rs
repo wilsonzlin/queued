@@ -17,7 +17,7 @@ pub struct IdGenerator {
 }
 
 impl IdGenerator {
-  pub async fn load_from_disk(
+  pub async fn load_from_device(
     device: SeekableAsyncFile,
     journal: Arc<Journal>,
     device_offset: u64,
@@ -29,6 +29,12 @@ impl IdGenerator {
       next: AtomicU64::new(next),
       uncommitted_ids: Mutex::new(BTreeMap::new()),
     }
+  }
+
+  pub async fn format_device(&self, device: SeekableAsyncFile) {
+    device
+      .write_at(self.device_offset, 0u64.to_be_bytes().to_vec())
+      .await;
   }
 
   pub async fn generate(&self, n: u64) -> u64 {

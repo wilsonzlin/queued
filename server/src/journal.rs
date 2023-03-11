@@ -1,4 +1,6 @@
 use crate::util::as_usize;
+use crate::util::read_u32;
+use crate::util::read_u64;
 use crate::util::u64_slice_write;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
@@ -29,6 +31,49 @@ impl Journal {
     }
   }
 
+  pub async fn format_device(&self) {
+    let mut raw = vec![0u8; as_usize!(self.capacity)];
+    u64_slice_write(&mut raw, OFFSETOF_LEN, &0u32.to_be_bytes());
+    let hash = blake3::hash(&raw[as_usize!(OFFSETOF_LEN)..]);
+    u64_slice_write(&mut raw, OFFSETOF_HASH, hash.as_bytes());
+
+    self
+      .device
+      .write_at_with_delayed_sync(vec![WriteRequest {
+        data: raw,
+        offset: self.offset,
+      }])
+      .await;
+  }
+
+  pub async fn recover(&self) {
+    let raw = self.device.read_at(self.offset, self.capacity).await;
+    let expected_hash = blake3::hash(&raw[32..]);
+    let recorded_hash = &raw[..32];
+    if expected_hash.as_bytes() != recorded_hash {
+      println!("Journal is corrupt, ignoring");
+      return;
+    };
+    let len = read_u32(&raw, OFFSETOF_LEN);
+    if len == 0 {
+      return;
+    };
+    println!("Recovering {} journal entries", len);
+    let mut journal_offset = OFFSETOF_ENTRIES;
+    for _ in 0..len {
+      let offset = read_u64(&raw, journal_offset);
+      journal_offset += 8;
+      let data_len = read_u32(&raw, journal_offset);
+      journal_offset += 4;
+      let data =
+        raw[as_usize!(journal_offset)..as_usize!(journal_offset) + as_usize!(data_len)].to_vec();
+      journal_offset += u64::from(data_len);
+      self.device.write_at(offset, data).await;
+    }
+    self.format_device().await;
+    println!("Journal recovered");
+  }
+
   pub async fn write(&self, offset: u64, data: Vec<u8>) {
     assert!(data.len() <= as_usize!(self.capacity - 8 - OFFSETOF_ENTRIES));
     let (fut, fut_ctl) = SignalFuture::new();
@@ -47,12 +92,14 @@ impl Journal {
       {
         let mut pending = self.pending.lock().await;
         while let Some(e) = pending.pop_front() {
-          if raw.len() + 8 + e.1.len() > as_usize!(self.capacity) {
+          if raw.len() + 8 + 4 + e.1.len() > as_usize!(self.capacity) {
             pending.push_front(e);
             break;
           };
           let (offset, data, fut_ctl) = e;
+          let data_len: u32 = data.len().try_into().unwrap();
           raw.extend_from_slice(&offset.to_be_bytes());
+          raw.extend_from_slice(&data_len.to_be_bytes());
           raw.extend_from_slice(&data);
           len += 1;
           writes.push(WriteRequest { data, offset });
@@ -79,6 +126,8 @@ impl Journal {
       for fut_ctl in fut_ctls {
         fut_ctl.signal();
       }
+
+      self.format_device().await;
     }
   }
 }

@@ -103,7 +103,8 @@ async fn main() {
     OFFSETOF_JOURNAL,
     JOURNAL_CAPACITY,
   ));
-  let id_gen = IdGenerator::load_from_disk(device.clone(), journal.clone(), OFFSETOF_ID_GEN).await;
+  let id_gen =
+    IdGenerator::load_from_device(device.clone(), journal.clone(), OFFSETOF_ID_GEN).await;
 
   let layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
     Arc::new(FixedSlotsLayout::new(
@@ -121,11 +122,15 @@ async fn main() {
   };
 
   if cli.format {
+    journal.format_device().await;
+    id_gen.format_device(device.clone()).await;
     layout.format_device().await;
     println!("Formatted device");
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
   };
+
+  journal.recover().await;
 
   let load_started = Instant::now();
   let LoadedData { invisible, visible } = layout.load_data_from_device(metrics.clone()).await;
