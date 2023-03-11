@@ -48,6 +48,13 @@ impl VisibleMessages {
     }
   }
 
+  pub async fn push_all(&self, ids: Vec<u64>) {
+    let mut messages = self.messages.lock().await;
+    for id in ids {
+      messages.push_back(id);
+    }
+  }
+
   pub async fn pop_next(&self) -> Option<u64> {
     // Let background loop update metrics to increase performance.
     self.messages.lock().await.pop_front()

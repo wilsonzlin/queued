@@ -4,6 +4,7 @@ use super::MessageOnDisk;
 use super::MessagePoll;
 use super::StorageLayout;
 use crate::invisible::InvisibleMessages;
+use crate::journal::Journal;
 use crate::metrics::Metrics;
 use crate::util::as_usize;
 use crate::util::read_ts;
@@ -89,6 +90,7 @@ pub struct LogStructuredLayout {
   device_size: u64,
   message_state: DashMap<u64, MessageState>,
   log_state: Mutex<LogState>,
+  journal: Arc<Journal>,
 }
 
 #[derive(Clone, Copy)]
@@ -98,13 +100,19 @@ struct TailBump {
 }
 
 impl LogStructuredLayout {
-  pub fn new(device: SeekableAsyncFile, device_offset: u64, device_size: u64) -> Self {
+  pub fn new(
+    device: SeekableAsyncFile,
+    device_offset: u64,
+    device_size: u64,
+    journal: Arc<Journal>,
+  ) -> Self {
     Self {
       device,
       device_offset,
       device_size,
       message_state: DashMap::new(),
       log_state: Mutex::new(LogState::default()),
+      journal,
     }
   }
 
@@ -154,7 +162,6 @@ impl LogStructuredLayout {
       state.tail += usage;
       let new_tail = state.tail;
       if new_tail < state.head {
-        // TODO Should this be recoverable? It would require complex redesigning to allow unwinding.
         panic!("out of storage space");
       };
 
@@ -206,13 +213,12 @@ impl LogStructuredLayout {
       };
 
       if let Some(new_tail_to_write) = new_tail_to_write {
-        // TODO Journal this.
         self
-          .device
-          .write_at_with_delayed_sync(vec![WriteRequest {
-            data: new_tail_to_write.to_be_bytes().to_vec(),
-            offset: STATE_OFFSETOF_TAIL,
-          }])
+          .journal
+          .write(
+            STATE_OFFSETOF_TAIL,
+            new_tail_to_write.to_be_bytes().to_vec(),
+          )
           .await;
 
         for ft in to_resolve {

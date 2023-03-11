@@ -54,11 +54,13 @@ pub async fn endpoint_push(
     ));
   };
 
+  let now = Utc::now();
   let mut errors = Vec::new();
 
   let n: u64 = req.messages.len().try_into().unwrap();
   let base_id = ctx.id_gen.generate(n).await;
-  let mut to_add = Vec::new();
+  let mut to_add_invisible = Vec::new();
+  let mut to_add_visible = Vec::new();
   let mut creations = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
     if msg.contents.len() > as_usize!(ctx.layout.max_contents_len()) {
@@ -78,9 +80,13 @@ pub async fn endpoint_push(
     };
 
     let id = base_id + u64::try_from(i).unwrap();
-    let visible_time = Utc::now() + Duration::seconds(msg.visibility_timeout_secs);
+    let visible_time = now + Duration::seconds(msg.visibility_timeout_secs);
 
-    to_add.push((id, visible_time));
+    if visible_time <= now {
+      to_add_invisible.push((id, visible_time));
+    } else {
+      to_add_visible.push(id);
+    };
     creations.push(MessageCreation {
       id,
       contents: msg.contents,
@@ -91,13 +97,13 @@ pub async fn endpoint_push(
   ctx.layout.create_messages(creations).await;
   ctx.id_gen.commit(base_id, n).await;
 
-  // TODO Optimisation: push messages with 0 visibility timeout to visible list directly.
   {
     let mut invisible = ctx.invisible.lock().await;
-    for (id, visible_time) in to_add {
+    for (id, visible_time) in to_add_invisible {
       invisible.insert(id, visible_time);
     }
   };
+  ctx.visible.push_all(to_add_visible).await;
 
   ctx
     .metrics

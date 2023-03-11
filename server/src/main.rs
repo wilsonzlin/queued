@@ -118,6 +118,7 @@ async fn main() {
       device.clone(),
       device_size,
       OFFSETOF_DATA,
+      journal.clone(),
     ))
   };
 
