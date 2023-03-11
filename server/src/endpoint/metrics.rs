@@ -69,9 +69,9 @@ pub async fn endpoint_metrics(
     .is_some();
 
   if json {
-    out.push_str("{\"timestamp\": \"");
+    out.push_str("{\"timestamp\": ");
     out.push_str(&ts);
-    out.push_str("\", \"values\": {");
+    out.push_str(", \"values\": {");
   };
 
   write_line!(
