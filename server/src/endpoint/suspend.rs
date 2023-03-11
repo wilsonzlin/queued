@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 #[derive(Serialize, Deserialize)]
 pub struct SuspendState {
-  push: bool,
-  poll: bool,
   delete: bool,
+  poll: bool,
+  push: bool,
+  update: bool,
 }
 
 fn get_suspend_state(ctx: &Ctx) -> SuspendState {
@@ -19,6 +20,7 @@ fn get_suspend_state(ctx: &Ctx) -> SuspendState {
     delete: ctx.suspend_delete.load(Ordering::Relaxed),
     poll: ctx.suspend_poll.load(Ordering::Relaxed),
     push: ctx.suspend_push.load(Ordering::Relaxed),
+    update: ctx.suspend_update.load(Ordering::Relaxed),
   }
 }
 
@@ -31,9 +33,10 @@ pub async fn endpoint_get_suspend(
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct EndpointPostSuspendInput {
-  push: Option<bool>,
-  poll: Option<bool>,
   delete: Option<bool>,
+  poll: Option<bool>,
+  push: Option<bool>,
+  update: Option<bool>,
 }
 
 pub async fn endpoint_post_suspend(
@@ -48,6 +51,9 @@ pub async fn endpoint_post_suspend(
   };
   if let Some(s) = req.push {
     ctx.suspend_push.store(s, Ordering::Relaxed);
+  };
+  if let Some(s) = req.update {
+    ctx.suspend_update.store(s, Ordering::Relaxed);
   };
 
   Ok(Json(get_suspend_state(&ctx)))

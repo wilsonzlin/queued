@@ -49,6 +49,8 @@ pub trait StorageLayout {
 
   async fn read_poll_tag(&self, index: u32) -> Vec<u8>;
 
+  async fn update_visibility_time(&self, index: u32, visible_time: DateTime<Utc>) -> ();
+
   async fn delete_message(&self, index: u32) -> ();
 
   async fn read_message(&self, index: u32) -> MessageOnDisk;

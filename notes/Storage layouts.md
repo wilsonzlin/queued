@@ -2,6 +2,12 @@
 
 ## Fixed slots
 
+### Cons
+
+- Messages are limited to 1 KiB, including metadata. This will be adjustable at format time in the future.
+- The server is limited to up to 2<sup>32</sup> (around 4 billion) messages at any time. Note that this would require 16 TiBs of storage. This is currently a simplification optimisation, and may be adjusted in the future.
+- Due to hashing, we need to read and rehash lots of data even if we only want to update a small part (e.g. one field).
+
 ## Log structured
 
 ### Pros

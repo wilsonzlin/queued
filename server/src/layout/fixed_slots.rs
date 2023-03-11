@@ -14,6 +14,7 @@ use crate::util::u64_slice;
 use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
 use async_trait::async_trait;
+use chrono::DateTime;
 use chrono::Utc;
 use futures::StreamExt;
 use lazy_static::lazy_static;
@@ -186,6 +187,32 @@ impl StorageLayout for FixedSlotsLayout {
       .device
       .read_at(slot_offset(index) + SLOT_OFFSETOF_POLL_TAG, 30)
       .await
+  }
+
+  async fn update_visibility_time(&self, index: u32, visible_time: DateTime<Utc>) {
+    let slot_offset = slot_offset(index);
+    let mut slot_data = self.device.read_at(slot_offset, SLOT_LEN).await;
+    let visible_time_bytes = visible_time.timestamp().to_be_bytes().to_vec();
+    u64_slice_write(
+      &mut slot_data,
+      SLOT_OFFSETOF_VISIBLE_TS,
+      &visible_time_bytes,
+    );
+    let hash = blake3::hash(&slot_data[32..]);
+
+    self
+      .device
+      .write_at_with_delayed_sync(vec![
+        WriteRequest {
+          data: hash.as_bytes().to_vec(),
+          offset: slot_offset + SLOT_OFFSETOF_HASH,
+        },
+        WriteRequest {
+          data: visible_time_bytes,
+          offset: slot_offset + SLOT_OFFSETOF_VISIBLE_TS,
+        },
+      ])
+      .await;
   }
 
   async fn delete_message(&self, index: u32) -> () {

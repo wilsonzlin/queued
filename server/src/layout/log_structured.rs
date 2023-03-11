@@ -12,6 +12,7 @@ use crate::util::read_u32;
 use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
 use async_trait::async_trait;
+use chrono::DateTime;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::iter;
@@ -33,8 +34,9 @@ use tokio::time::sleep;
 #[repr(u8)]
 enum LogEntryType {
   Create,
-  Poll,
   Delete,
+  Poll,
+  Update,
 }
 
 const STATE_OFFSETOF_HEAD: u64 = 0;
@@ -55,6 +57,10 @@ const LOGENT_POLL_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
 const LOGENT_POLL_OFFSETOF_POLL_TAG: u64 = LOGENT_POLL_OFFSETOF_INDEX + 4;
 const LOGENT_POLL_OFFSETOF_VISIBLE_TS: u64 = LOGENT_POLL_OFFSETOF_POLL_TAG + 30;
 const LOGENT_POLL_SIZE: u64 = LOGENT_POLL_OFFSETOF_VISIBLE_TS + 8;
+
+const LOGENT_UPDATE_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
+const LOGENT_UPDATE_OFFSETOF_VISIBLE_TS: u64 = LOGENT_UPDATE_OFFSETOF_INDEX + 4;
+const LOGENT_UPDATE_SIZE: u64 = LOGENT_UPDATE_OFFSETOF_VISIBLE_TS + 8;
 
 const LOGENT_DELETE_OFFSETOF_INDEX: u64 = LOGENT_OFFSETOF_TYPE + 1;
 const LOGENT_DELETE_SIZE: u64 = LOGENT_DELETE_OFFSETOF_INDEX + 4;
@@ -286,6 +292,13 @@ impl StorageLayout for LogStructuredLayout {
           available.update_timestamp(index, visible_time);
           virtual_offset += LOGENT_POLL_SIZE;
         }
+        LogEntryType::Update => {
+          let raw = self.device.read_at(actual_offset, LOGENT_UPDATE_SIZE).await;
+          let index = read_u32(&raw, LOGENT_UPDATE_OFFSETOF_INDEX);
+          let visible_time = read_ts(&raw, LOGENT_UPDATE_OFFSETOF_VISIBLE_TS);
+          available.update_timestamp(index, visible_time);
+          virtual_offset += LOGENT_UPDATE_SIZE;
+        }
         LogEntryType::Delete => {
           let raw = self.device.read_at(actual_offset, LOGENT_DELETE_SIZE).await;
           let index = read_u32(&raw, LOGENT_DELETE_OFFSETOF_INDEX);
@@ -306,6 +319,30 @@ impl StorageLayout for LogStructuredLayout {
       .device
       .read_at(offset + LOGENT_POLL_OFFSETOF_POLL_TAG, 30)
       .await
+  }
+
+  async fn update_visibility_time(&self, index: u32, visible_time: DateTime<Utc>) {
+    let mut data = vec![0u8; as_usize!(LOGENT_UPDATE_SIZE)];
+    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Update as u8;
+    u64_slice_write(
+      &mut data,
+      LOGENT_UPDATE_OFFSETOF_INDEX,
+      &index.to_be_bytes(),
+    );
+    u64_slice_write(
+      &mut data,
+      LOGENT_UPDATE_OFFSETOF_VISIBLE_TS,
+      &visible_time.timestamp().to_be_bytes(),
+    );
+    let bump = self.bump_tail(data.len()).await;
+    self
+      .device
+      .write_at_with_delayed_sync(vec![WriteRequest {
+        data,
+        offset: bump.acquired_actual_offset,
+      }])
+      .await;
+    self.commit_tail_bump(bump).await;
   }
 
   async fn delete_message(&self, index: u32) {

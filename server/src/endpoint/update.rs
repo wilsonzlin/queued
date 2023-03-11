@@ -3,28 +3,34 @@ use crate::ctx::Ctx;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
+use chrono::Duration;
+use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 #[derive(Deserialize)]
-pub struct EndpointDeleteInput {
+pub struct EndpointUpdateInput {
   index: u32,
   poll_tag: String,
+  visibility_timeout_secs: i64,
 }
 
 #[derive(Serialize)]
-pub struct EndpointDeleteOutput {}
+pub struct EndpointUpdateOutput {}
 
-pub async fn endpoint_delete(
+pub async fn endpoint_update(
   State(ctx): State<Arc<Ctx>>,
-  Json(req): Json<EndpointDeleteInput>,
-) -> Result<Json<EndpointDeleteOutput>, (StatusCode, &'static str)> {
-  if ctx.suspend_delete.load(Ordering::Relaxed) {
+  Json(req): Json<EndpointUpdateInput>,
+) -> Result<Json<EndpointUpdateOutput>, (StatusCode, &'static str)> {
+  if ctx
+    .suspend_update
+    .load(std::sync::atomic::Ordering::Relaxed)
+  {
     ctx
       .metrics
-      .suspended_delete_counter
+      .suspended_update_counter
       .fetch_add(1, Ordering::Relaxed);
     return Err((
       StatusCode::SERVICE_UNAVAILABLE,
@@ -34,31 +40,38 @@ pub async fn endpoint_delete(
 
   verify_poll_tag(
     &ctx,
-    &ctx.metrics.missing_delete_counter,
+    &ctx.metrics.missing_update_counter,
     req.index,
     &req.poll_tag,
   )
   .await?;
 
+  let new_visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
+
   if ctx.available.lock().await.remove(req.index).is_none() {
     ctx
       .metrics
-      .missing_delete_counter
+      .missing_update_counter
       .fetch_add(1, Ordering::Relaxed);
     // Someone else beat us to it.
     return Err((StatusCode::NOT_FOUND, "message not found"));
   };
 
-  ctx.layout.delete_message(req.index).await;
+  // Update data.
+  ctx
+    .layout
+    .update_visibility_time(req.index, new_visible_time)
+    .await;
 
   {
-    let mut vacant = ctx.vacant.lock().await;
-    vacant.add(req.index);
+    let mut available = ctx.available.lock().await;
+    available.insert(req.index, new_visible_time);
   };
 
   ctx
     .metrics
-    .successful_delete_counter
+    .successful_update_counter
     .fetch_add(1, Ordering::Relaxed);
-  Ok(Json(EndpointDeleteOutput {}))
+
+  Ok(Json(EndpointUpdateOutput {}))
 }

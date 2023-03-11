@@ -30,6 +30,7 @@ use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use endpoint::suspend::endpoint_get_suspend;
 use endpoint::suspend::endpoint_post_suspend;
+use endpoint::update::endpoint_update;
 use layout::LoadedData;
 use layout::StorageLayout;
 use metrics::Metrics;
@@ -61,6 +62,7 @@ async fn start_server_loop(
     suspend_delete: AtomicBool::new(false),
     suspend_poll: AtomicBool::new(false),
     suspend_push: AtomicBool::new(false),
+    suspend_update: AtomicBool::new(false),
     vacant,
   });
 
@@ -74,6 +76,7 @@ async fn start_server_loop(
       "/suspend",
       get(endpoint_get_suspend).post(endpoint_post_suspend),
     )
+    .route("/update", post(endpoint_update))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
     .with_state(ctx.clone());
 

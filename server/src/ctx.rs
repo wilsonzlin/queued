@@ -13,6 +13,7 @@ pub struct Ctx {
   pub layout: Arc<dyn StorageLayout + Send + Sync>,
   pub metrics: Arc<Metrics>,
   pub suspend_delete: AtomicBool,
+  pub suspend_update: AtomicBool,
   pub suspend_poll: AtomicBool,
   pub suspend_push: AtomicBool,
   pub vacant: Mutex<VacantSlots>,
