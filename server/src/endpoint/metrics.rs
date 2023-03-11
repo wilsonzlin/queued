@@ -1,35 +1,50 @@
 use crate::ctx::Ctx;
 use axum::extract::State;
+use axum::http::header::CONTENT_TYPE;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use chrono::Utc;
+use serde_json::json;
 use std::sync::Arc;
 
 macro_rules! write_line {
-  ($val:expr, $out:expr, $field_name:ident, $field_type:ident, $ts:expr, $help:expr) => {
+  ($json:expr, $val:expr, $out:expr, $field_name:ident, $field_type:ident, $ts:expr, $help:expr) => {
     let field_name = stringify!($field_name);
     let field_type = stringify!($field_type);
 
-    $out.push_str("# HELP queued_");
-    $out.push_str(field_name);
-    $out.push_str(" ");
-    $out.push_str($help);
-    $out.push_str("\n");
+    if $json {
+      $out.push('"');
+      $out.push_str(field_name);
+      $out.push_str("\":");
+      $out.push_str(&json!({
+        "value": $val,
+        "description": $help,
+        "type": field_type,
+      }).to_string());
+      $out.push(',');
+    } else {
+      $out.push_str("# HELP queued_");
+      $out.push_str(field_name);
+      $out.push_str(" ");
+      $out.push_str($help);
+      $out.push_str("\n");
 
-    $out.push_str("# TYPE queued_");
-    $out.push_str(field_name);
-    $out.push_str(" ");
-    $out.push_str(field_type);
-    $out.push_str("\n");
+      $out.push_str("# TYPE queued_");
+      $out.push_str(field_name);
+      $out.push_str(" ");
+      $out.push_str(field_type);
+      $out.push_str("\n");
 
-    $out.push_str("queued_");
-    $out.push_str(field_name);
-    $out.push_str(" ");
-    $out.push_str(&$val.to_string());
-    $out.push_str(" ");
-    $out.push_str(&$ts);
-    $out.push_str("\n");
+      $out.push_str("queued_");
+      $out.push_str(field_name);
+      $out.push_str(" ");
+      $out.push_str(&$val.to_string());
+      $out.push_str(" ");
+      $out.push_str(&$ts);
+      $out.push_str("\n");
 
-    $out.push_str("\n");
+      $out.push_str("\n");
+    };
   };
 }
 
@@ -44,11 +59,23 @@ macro_rules! get_atomic_metric {
 
 pub async fn endpoint_metrics(
   State(ctx): State<Arc<Ctx>>,
-) -> Result<String, (StatusCode, &'static str)> {
+  headers: HeaderMap,
+) -> Result<(HeaderMap, String), (StatusCode, &'static str)> {
   let mut out = String::new();
   let ts = Utc::now().timestamp_millis().to_string();
+  let json = headers
+    .get("accept")
+    .filter(|h| h.as_bytes() == b"application/json")
+    .is_some();
+
+  if json {
+    out.push_str("{\"timestamp\": \"");
+    out.push_str(&ts);
+    out.push_str("\", \"values\": {");
+  };
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, empty_poll_counter),
     out,
     empty_poll,
@@ -58,6 +85,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, invisible_gauge),
     out,
     invisible,
@@ -67,6 +95,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_background_loops_counter(),
     out,
     io_sync_background_loops,
@@ -76,6 +105,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_counter(),
     out,
     io_sync,
@@ -85,6 +115,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_delayed_counter(),
     out,
     io_sync_delayed,
@@ -94,6 +125,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_longest_delay_us_counter(),
     out,
     io_sync_longest_delay_us,
@@ -103,6 +135,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_shortest_delay_us_counter(),
     out,
     io_sync_shortest_delay_us,
@@ -112,6 +145,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.sync_us_counter(),
     out,
     io_sync_us,
@@ -121,6 +155,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.write_bytes_counter(),
     out,
     io_write_bytes,
@@ -130,6 +165,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.write_counter(),
     out,
     io_write,
@@ -139,6 +175,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     ctx.metrics.io.write_us_counter(),
     out,
     io_write_us,
@@ -148,6 +185,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, missing_delete_counter),
     out,
     missing_delete,
@@ -157,6 +195,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, missing_update_counter),
     out,
     missing_update,
@@ -166,6 +205,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, successful_delete_counter),
     out,
     successful_delete,
@@ -175,6 +215,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, successful_poll_counter),
     out,
     successful_poll,
@@ -184,6 +225,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, successful_push_counter),
     out,
     successful_push,
@@ -193,6 +235,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, successful_update_counter),
     out,
     successful_update,
@@ -202,6 +245,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, suspended_delete_counter),
     out,
     suspended_delete,
@@ -211,6 +255,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, suspended_poll_counter),
     out,
     suspended_poll,
@@ -220,6 +265,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, suspended_push_counter),
     out,
     suspended_push,
@@ -229,6 +275,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, suspended_update_counter),
     out,
     suspended_update,
@@ -238,6 +285,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, throttled_poll_counter),
     out,
     throttled_poll,
@@ -247,6 +295,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, vacant_gauge),
     out,
     vacant,
@@ -256,6 +305,7 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    json,
     get_atomic_metric!(ctx, visible_gauge),
     out,
     visible,
@@ -264,5 +314,13 @@ pub async fn endpoint_metrics(
     "Amount of visible messages currently in the queue, which can be polled. This may be delayed by a few seconds."
   );
 
-  Ok(out)
+  let mut res_headers = HeaderMap::new();
+  if json {
+    // Remove last comma.
+    out.pop().unwrap();
+    out.push_str("}}");
+    res_headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+  };
+
+  Ok((res_headers, out))
 }

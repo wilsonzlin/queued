@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub struct InvisibleMessages {
   metrics: Arc<Metrics>,
   // Since we don't expect there to be many entries in each DateTime<Utc> entry, a HashSet is more optimised than a RoaringBitmap.
-  // We use a map instead of a heap as we want to be able to extract/mutate individual specific entries.
+  // We use a map instead of a heap as we want to be able to remove/mutate individual specific entries.
   ordered_by_visible_time: BTreeMap<DateTime<Utc>, HashSet<u32>>,
   by_index: HashMap<u32, DateTime<Utc>>,
 }

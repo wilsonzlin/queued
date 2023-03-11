@@ -123,7 +123,7 @@ This will rate limit poll requests to 100 every 60 seconds. No other endpoint is
 
 `GET /healthz` returns the current build version.
 
-`GET /metrics` returns metrics in the Prometheus format:
+`GET /metrics` returns metrics in the Prometheus or JSON (`Accept: application/json`) format:
 
 ```
 # HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
