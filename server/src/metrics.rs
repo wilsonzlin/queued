@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 #[derive(Default)]
 pub struct Metrics {
-  pub available_gauge: AtomicU64,
   pub empty_poll_counter: AtomicU64,
+  pub invisible_gauge: AtomicU64,
   pub io: Arc<SeekableAsyncFileMetrics>,
   pub missing_delete_counter: AtomicU64,
   pub missing_update_counter: AtomicU64,
@@ -19,4 +19,5 @@ pub struct Metrics {
   pub suspended_update_counter: AtomicU64,
   pub throttled_poll_counter: AtomicU64,
   pub vacant_gauge: AtomicU64,
+  pub visible_gauge: AtomicU64,
 }

@@ -48,7 +48,7 @@ pub async fn endpoint_update(
 
   let new_visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  if ctx.available.lock().await.remove(req.index).is_none() {
+  if ctx.invisible.lock().await.remove(req.index).is_none() {
     ctx
       .metrics
       .missing_update_counter
@@ -63,10 +63,11 @@ pub async fn endpoint_update(
     .update_visibility_time(req.index, new_visible_time)
     .await;
 
-  {
-    let mut available = ctx.available.lock().await;
-    available.insert(req.index, new_visible_time);
-  };
+  ctx
+    .invisible
+    .lock()
+    .await
+    .insert(req.index, new_visible_time);
 
   ctx
     .metrics

@@ -1,5 +1,4 @@
-use self::fixed_slots::SlotState;
-use crate::available::AvailableMessages;
+use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
 use crate::vacant::VacantSlots;
 use async_trait::async_trait;
@@ -11,7 +10,7 @@ pub mod fixed_slots;
 pub mod log_structured;
 
 pub struct LoadedData {
-  pub available: AvailableMessages,
+  pub available: InvisibleMessages,
   pub vacant: VacantSlots,
 }
 
@@ -22,7 +21,6 @@ pub struct MessageOnDisk {
 }
 
 pub struct MessagePoll {
-  pub state: SlotState,
   pub poll_tag: Vec<u8>,
   pub created_time: DateTime<Utc>, // This should simply be repeated from the existing value; any change will NOT get persisted.
   pub visible_time: DateTime<Utc>,
@@ -31,7 +29,6 @@ pub struct MessagePoll {
 
 pub struct MessageCreation {
   pub index: u32,
-  pub state: SlotState,
   pub visible_time: DateTime<Utc>,
   pub contents: String,
 }

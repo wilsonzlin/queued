@@ -40,7 +40,7 @@ pub async fn endpoint_delete(
   )
   .await?;
 
-  if ctx.available.lock().await.remove(req.index).is_none() {
+  if ctx.invisible.lock().await.remove(req.index).is_none() {
     ctx
       .metrics
       .missing_delete_counter

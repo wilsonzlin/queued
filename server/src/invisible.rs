@@ -7,16 +7,17 @@ use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-pub struct AvailableMessages {
+pub struct InvisibleMessages {
   metrics: Arc<Metrics>,
   // Since we don't expect there to be many entries in each DateTime<Utc> entry, a HashSet is more optimised than a RoaringBitmap.
+  // We use a map instead of a heap as we want to be able to extract/mutate individual specific entries.
   ordered_by_visible_time: BTreeMap<DateTime<Utc>, HashSet<u32>>,
   by_index: HashMap<u32, DateTime<Utc>>,
 }
 
-impl AvailableMessages {
+impl InvisibleMessages {
   pub fn new(metrics: Arc<Metrics>) -> Self {
-    AvailableMessages {
+    InvisibleMessages {
       metrics,
       by_index: HashMap::new(),
       ordered_by_visible_time: BTreeMap::new(),
@@ -39,7 +40,7 @@ impl AvailableMessages {
     let None = self.by_index.insert(index, ts) else {
       panic!("slot already exists");
     };
-    self.metrics.available_gauge.fetch_add(1, Ordering::Relaxed);
+    self.metrics.invisible_gauge.fetch_add(1, Ordering::Relaxed);
   }
 
   pub fn has(&self, index: u32) -> bool {
@@ -55,7 +56,7 @@ impl AvailableMessages {
     if set.is_empty() {
       self.ordered_by_visible_time.remove(&ts).unwrap();
     }
-    self.metrics.available_gauge.fetch_sub(1, Ordering::Relaxed);
+    self.metrics.invisible_gauge.fetch_sub(1, Ordering::Relaxed);
     Some(())
   }
 

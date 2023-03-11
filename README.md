@@ -126,101 +126,106 @@ This will rate limit poll requests to 100 every 60 seconds. No other endpoint is
 `GET /metrics` returns metrics in the Prometheus format:
 
 ```
-# HELP queued_available Amount of messages currently in the queue, including both past and future visibility timestamps.
-# TYPE queued_available gauge
-queued_available 4000000 1678522621676
-
 # HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
 # TYPE queued_empty_poll counter
-queued_empty_poll 0 1678522621676
+queued_empty_poll 0 1678525380549
+
+# HELP queued_invisible Amount of invisible messages currently in the queue. They may have been created, polled, or updated.
+# TYPE queued_invisible gauge
+queued_invisible 0 1678525380549
 
 # HELP queued_io_sync_background_loops Total number of delayed sync background loop iterations.
 # TYPE queued_io_sync_background_loops counter
-queued_io_sync_background_loops 16305 1678522621676
+queued_io_sync_background_loops 19601 1678525380549
 
 # HELP queued_io_sync Total number of fsync and fdatasync syscalls.
 # TYPE queued_io_sync counter
-queued_io_sync 204 1678522621676
+queued_io_sync 0 1678525380549
 
 # HELP queued_io_sync_delayed Total number of requested syncs that were delayed until a later time.
 # TYPE queued_io_sync_delayed counter
-queued_io_sync_delayed 1000032 1678522621676
+queued_io_sync_delayed 0 1678525380549
 
 # HELP queued_io_sync_longest_delay_us Total number of microseconds spent waiting for a sync by one or more delayed syncs.
 # TYPE queued_io_sync_longest_delay_us counter
-queued_io_sync_longest_delay_us 2225151 1678522621676
+queued_io_sync_longest_delay_us 0 1678525380549
 
 # HELP queued_io_sync_shortest_delay_us Total number of microseconds spent waiting after a final delayed sync before the actual sync.
 # TYPE queued_io_sync_shortest_delay_us counter
-queued_io_sync_shortest_delay_us 243661 1678522621676
+queued_io_sync_shortest_delay_us 0 1678525380549
 
 # HELP queued_io_sync_us Total number of microseconds spent in fsync and fdatasync syscalls.
 # TYPE queued_io_sync_us counter
-queued_io_sync_us 2253905 1678522621676
+queued_io_sync_us 0 1678525380549
 
 # HELP queued_io_write_bytes Total number of bytes written.
 # TYPE queued_io_write_bytes counter
-queued_io_write_bytes 28889146 1678522621676
+queued_io_write_bytes 0 1678525380549
 
 # HELP queued_io_write Total number of write syscalls.
 # TYPE queued_io_write counter
-queued_io_write 1000032 1678522621676
+queued_io_write 0 1678525380549
 
 # HELP queued_io_write_us Total number of microseconds spent in write syscalls.
 # TYPE queued_io_write_us counter
-queued_io_write_us 888290 1678522621676
+queued_io_write_us 0 1678525380549
 
 # HELP queued_missing_delete Total number of delete requests that failed due to the requested message not being found.
 # TYPE queued_missing_delete counter
-queued_missing_delete 0 1678522621676
+queued_missing_delete 0 1678525380549
 
 # HELP queued_missing_update Total number of update requests that failed due to the requested message not being found.
 # TYPE queued_missing_update counter
-queued_missing_update 0 1678522621676
+queued_missing_update 0 1678525380549
 
 # HELP queued_successful_delete Total number of delete requests that did delete a message successfully.
 # TYPE queued_successful_delete counter
-queued_successful_delete 0 1678522621676
+queued_successful_delete 0 1678525380549
 
 # HELP queued_successful_poll Total number of poll requests that did poll a message successfully.
 # TYPE queued_successful_poll counter
-queued_successful_poll 0 1678522621676
+queued_successful_poll 0 1678525380549
 
 # HELP queued_successful_push Total number of push requests that did push a message successfully.
 # TYPE queued_successful_push counter
-queued_successful_push 16130 1678522621676
+queued_successful_push 0 1678525380549
 
 # HELP queued_successful_update Total number of update requests that did update a message successfully.
 # TYPE queued_successful_update counter
-queued_successful_update 0 1678522621676
+queued_successful_update 0 1678525380549
 
 # HELP queued_suspended_delete Total number of delete requests while the endpoint was suspended.
 # TYPE queued_suspended_delete counter
-queued_suspended_delete 0 1678522621676
+queued_suspended_delete 0 1678525380549
 
 # HELP queued_suspended_poll Total number of poll requests while the endpoint was suspended.
 # TYPE queued_suspended_poll counter
-queued_suspended_poll 0 1678522621676
+queued_suspended_poll 0 1678525380549
 
 # HELP queued_suspended_push Total number of push requests while the endpoint was suspended.
 # TYPE queued_suspended_push counter
-queued_suspended_push 0 1678522621676
+queued_suspended_push 0 1678525380549
 
 # HELP queued_suspended_update Total number of update requests while the endpoint was suspended.
 # TYPE queued_suspended_update counter
-queued_suspended_update 0 1678522621676
+queued_suspended_update 0 1678525380549
 
 # HELP queued_throttled_poll Total number of poll requests that were throttled.
 # TYPE queued_throttled_poll counter
-queued_throttled_poll 0 1678522621676
+queued_throttled_poll 0 1678525380549
 
 # HELP queued_vacant How many more messages that can currently be pushed into the queue.
 # TYPE queued_vacant gauge
-queued_vacant 18446744073708551616 1678522621676
+queued_vacant 0 1678525380549
+
+# HELP queued_visible Amount of visible messages currently in the queue, which can be polled. This may be delayed by a few seconds.
+# TYPE queued_visible gauge
+queued_visible 4000000 1678525380549
 ```
 
 ## Important details
 
+- Messages are delivered in order of their visibility time. Messages visible at the same time may be delivered in any order. Messages will never be delivered before their visibility time, but may be delivered a few seconds later. Polled messages could be updated or deleted a few seconds after their visibility time for the same reason.
 - The index and poll tag values are opaque and should not be used as unique or ordered IDs.
 - If you require more than one queue (e.g. channels), run multiple servers.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.

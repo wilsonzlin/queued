@@ -17,7 +17,7 @@ pub async fn verify_poll_tag(
   }
 
   // We use double-checked locking to avoid an expensive I/O read of the poll tag.
-  if !ctx.available.lock().await.has(index) {
+  if !ctx.invisible.lock().await.has(index) {
     missing_metric.fetch_add(1, Ordering::Relaxed);
     return Err((StatusCode::NOT_FOUND, "message not found"));
   };

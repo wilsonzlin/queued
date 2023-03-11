@@ -2,19 +2,19 @@
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-pub mod available;
 pub mod ctx;
 pub mod endpoint;
+pub mod invisible;
 pub mod layout;
 pub mod metrics;
 pub mod throttler;
 pub mod util;
 pub mod vacant;
+pub mod visible;
 
 use crate::layout::fixed_slots::FixedSlotsLayout;
 use crate::layout::log_structured::LogStructuredLayout;
 use crate::util::get_device_size;
-use available::AvailableMessages;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::post;
@@ -34,6 +34,7 @@ use endpoint::suspend::endpoint_post_suspend;
 use endpoint::throttle::endpoint_get_throttle;
 use endpoint::throttle::endpoint_post_throttle;
 use endpoint::update::endpoint_update;
+use invisible::InvisibleMessages;
 use layout::LoadedData;
 use layout::StorageLayout;
 use metrics::Metrics;
@@ -47,19 +48,21 @@ use tokio::join;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use vacant::VacantSlots;
+use visible::VisibleMessages;
 
 async fn start_server_loop(
   interface: Ipv4Addr,
   port: u16,
-  available: Mutex<AvailableMessages>,
+  invisible: Arc<Mutex<InvisibleMessages>>,
+  visible: Arc<VisibleMessages>,
   device: SeekableAsyncFile,
   layout: Arc<dyn StorageLayout + Send + Sync>,
   metrics: Arc<Metrics>,
   vacant: Mutex<VacantSlots>,
 ) {
   let ctx = Arc::new(Ctx {
-    available,
     device,
+    invisible,
     layout,
     metrics,
     suspend_delete: AtomicBool::new(false),
@@ -67,6 +70,7 @@ async fn start_server_loop(
     suspend_push: AtomicBool::new(false),
     suspend_update: AtomicBool::new(false),
     throttler: Mutex::new(None),
+    visible,
     vacant,
   });
 
@@ -155,7 +159,7 @@ async fn main() {
   )
   .await;
 
-  let mut layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
+  let layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
     Arc::new(FixedSlotsLayout::new(device.clone(), device_size))
   } else {
     Arc::new(LogStructuredLayout::new(device.clone(), device_size))
@@ -169,10 +173,7 @@ async fn main() {
   };
 
   let load_started = Instant::now();
-  let LoadedData { available, vacant } = Arc::get_mut(&mut layout)
-    .unwrap()
-    .load_data_from_device(metrics.clone())
-    .await;
+  let LoadedData { available, vacant } = layout.load_data_from_device(metrics.clone()).await;
   println!(
     "Verified and loaded data on device in {:.2} seconds",
     load_started.elapsed().as_secs_f64()
@@ -180,10 +181,14 @@ async fn main() {
   println!("Vacant slots: {}", vacant.count());
   println!("Available messages: {}", available.len());
 
+  let invisible = Arc::new(Mutex::new(available));
+  let visible = Arc::new(VisibleMessages::new(metrics.clone()));
+
   let server_fut = start_server_loop(
     cli.interface,
     cli.port,
-    Mutex::new(available),
+    invisible.clone(),
+    visible.clone(),
     device.clone(),
     layout.clone(),
     metrics,
@@ -194,5 +199,6 @@ async fn main() {
     server_fut,
     device.start_delayed_data_sync_background_loop(),
     layout.start_background_loops(),
+    visible.start_invisible_consumption_background_loop(invisible.clone()),
   };
 }

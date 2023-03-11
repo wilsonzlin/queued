@@ -1,5 +1,4 @@
 use crate::ctx::Ctx;
-use crate::layout::fixed_slots::SlotState;
 use crate::layout::MessageCreation;
 use crate::util::as_usize;
 use axum::extract::State;
@@ -58,10 +57,7 @@ pub async fn endpoint_push(
 
   let mut errors = Vec::new();
 
-  let indices = {
-    let mut vacant = ctx.vacant.lock().await;
-    vacant.take_up_to_n(req.messages.len())
-  };
+  let indices = ctx.vacant.lock().await.take_up_to_n(req.messages.len());
 
   let mut to_add = Vec::new();
   let mut creations = Vec::new();
@@ -98,17 +94,17 @@ pub async fn endpoint_push(
     creations.push(MessageCreation {
       index,
       contents: msg.contents,
-      state: SlotState::Available,
       visible_time,
     });
   }
 
   ctx.layout.create_messages(creations).await;
 
+  // TODO Optimisation: push messages with 0 visibility timeout to visible list directly.
   {
-    let mut available = ctx.available.lock().await;
+    let mut invisible = ctx.invisible.lock().await;
     for (index, visible_time) in to_add {
-      available.insert(index, visible_time);
+      invisible.insert(index, visible_time);
     }
   };
 

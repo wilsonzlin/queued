@@ -3,7 +3,7 @@ use super::MessageCreation;
 use super::MessageOnDisk;
 use super::MessagePoll;
 use super::StorageLayout;
-use crate::available::AvailableMessages;
+use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
 use crate::util::as_usize;
 use crate::util::read_ts;
@@ -106,7 +106,7 @@ impl StorageLayout for FixedSlotsLayout {
   }
 
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
-    let available = Arc::new(Mutex::new(AvailableMessages::new(metrics.clone())));
+    let available = Arc::new(Mutex::new(InvisibleMessages::new(metrics.clone())));
     let vacant = Arc::new(Mutex::new(VacantSlots::new(metrics.clone())));
     let progress = Arc::new(AtomicU64::new(0));
 
@@ -245,7 +245,6 @@ impl StorageLayout for FixedSlotsLayout {
     &self,
     index: u32,
     MessagePoll {
-      state,
       poll_tag,
       created_time,
       visible_time,
@@ -256,7 +255,9 @@ impl StorageLayout for FixedSlotsLayout {
     let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
 
     u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[0]);
-    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[state as u8]);
+    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
+      SlotState::Available as u8
+    ]);
     u64_slice_write(&mut slot_data, SLOT_OFFSETOF_POLL_TAG, &poll_tag);
     u64_slice_write(
       &mut slot_data,
@@ -289,7 +290,6 @@ impl StorageLayout for FixedSlotsLayout {
     let mut writes = vec![];
     for MessageCreation {
       index,
-      state,
       contents,
       visible_time,
     } in creations
@@ -297,7 +297,9 @@ impl StorageLayout for FixedSlotsLayout {
       let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN) + contents.len()];
 
       u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[1]);
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[state as u8]);
+      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
+        SlotState::Available as u8
+      ]);
       u64_slice_write(
         &mut slot_data,
         SLOT_OFFSETOF_CREATED_TS,

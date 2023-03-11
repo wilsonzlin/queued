@@ -3,7 +3,7 @@ use super::MessageCreation;
 use super::MessageOnDisk;
 use super::MessagePoll;
 use super::StorageLayout;
-use crate::available::AvailableMessages;
+use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
 use crate::util::as_usize;
 use crate::util::read_ts;
@@ -254,7 +254,7 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
-    let mut available = AvailableMessages::new(metrics.clone());
+    let mut available = InvisibleMessages::new(metrics.clone());
     let mut vacant = VacantSlots::new(metrics.clone());
     vacant.fill(0, u32::MAX);
 

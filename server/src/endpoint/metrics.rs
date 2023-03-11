@@ -49,21 +49,21 @@ pub async fn endpoint_metrics(
   let ts = Utc::now().timestamp_millis().to_string();
 
   write_line!(
-    get_atomic_metric!(ctx, available_gauge),
-    out,
-    available,
-    gauge,
-    ts,
-    "Amount of messages currently in the queue, including both past and future visibility timestamps."
-  );
-
-  write_line!(
     get_atomic_metric!(ctx, empty_poll_counter),
     out,
     empty_poll,
     counter,
     ts,
     "Total number of poll requests that failed due to no message being available."
+  );
+
+  write_line!(
+    get_atomic_metric!(ctx, invisible_gauge),
+    out,
+    invisible,
+    gauge,
+    ts,
+    "Amount of invisible messages currently in the queue. They may have been created, polled, or updated."
   );
 
   write_line!(
@@ -253,6 +253,15 @@ pub async fn endpoint_metrics(
     gauge,
     ts,
     "How many more messages that can currently be pushed into the queue."
+  );
+
+  write_line!(
+    get_atomic_metric!(ctx, visible_gauge),
+    out,
+    visible,
+    gauge,
+    ts,
+    "Amount of visible messages currently in the queue, which can be polled. This may be delayed by a few seconds."
   );
 
   Ok(out)

@@ -1,5 +1,4 @@
 use crate::ctx::Ctx;
-use crate::layout::fixed_slots::SlotState;
 use crate::layout::MessageOnDisk;
 use crate::layout::MessagePoll;
 use axum::extract::State;
@@ -63,12 +62,9 @@ pub async fn endpoint_poll(
     };
   };
 
-  let poll_time = Utc::now();
+  let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);
-
-  // We don't poll (i.e. get and remove) at this/the same time, as we cannot mark it as available again until our writes (updated slot data) are written and no one else can clobber/mangle them.
-  let Some(index) = ctx.available.lock().await.remove_earliest_up_to(&poll_time) else {
+  let Some(index) = ctx.visible.pop_next().await else {
     ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
     return Ok(Json(EndpointPollOutput { message: None }));
   };
@@ -88,7 +84,6 @@ pub async fn endpoint_poll(
   ctx
     .layout
     .mark_as_polled(index, MessagePoll {
-      state: SlotState::Available,
       poll_tag,
       created_time: created,
       visible_time,
@@ -96,10 +91,7 @@ pub async fn endpoint_poll(
     })
     .await;
 
-  {
-    let mut available = ctx.available.lock().await;
-    available.insert(index, visible_time);
-  };
+  ctx.invisible.lock().await.insert(index, visible_time);
 
   ctx
     .metrics
