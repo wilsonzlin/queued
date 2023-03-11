@@ -157,6 +157,15 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    get_atomic_metric!(ctx, missing_update_counter),
+    out,
+    missing_update,
+    counter,
+    ts,
+    "Total number of update requests that failed due to the requested message not being found."
+  );
+
+  write_line!(
     get_atomic_metric!(ctx, successful_delete_counter),
     out,
     successful_delete,
@@ -184,6 +193,15 @@ pub async fn endpoint_metrics(
   );
 
   write_line!(
+    get_atomic_metric!(ctx, successful_update_counter),
+    out,
+    successful_update,
+    counter,
+    ts,
+    "Total number of update requests that did update a message successfully."
+  );
+
+  write_line!(
     get_atomic_metric!(ctx, suspended_delete_counter),
     out,
     suspended_delete,
@@ -208,6 +226,24 @@ pub async fn endpoint_metrics(
     counter,
     ts,
     "Total number of push requests while the endpoint was suspended."
+  );
+
+  write_line!(
+    get_atomic_metric!(ctx, suspended_update_counter),
+    out,
+    suspended_update,
+    counter,
+    ts,
+    "Total number of update requests while the endpoint was suspended."
+  );
+
+  write_line!(
+    get_atomic_metric!(ctx, throttled_poll_counter),
+    out,
+    throttled_poll,
+    counter,
+    ts,
+    "Total number of poll requests that were throttled."
   );
 
   write_line!(

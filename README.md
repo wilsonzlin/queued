@@ -90,88 +90,6 @@ Performing backups can be done by stopping the process and taking a copy of the 
 
 ## Management
 
-`GET /healthz` returns the current build version.
-
-`GET /metrics` returns metrics in the Prometheus format:
-
-```
-# HELP queued_available Amount of messages currently in the queue, including both past and future visibility timestamps.
-# TYPE queued_available gauge
-queued_available 0 1673001337599
-
-# HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
-# TYPE queued_empty_poll counter
-queued_empty_poll 8192 1673001337599
-
-# HELP queued_io_sync Total number of fsync and fdatasync syscalls.
-# TYPE queued_io_sync counter
-queued_io_sync 5202 1673001337599
-
-# HELP queued_io_sync_background_loops Total number of delayed sync background loop iterations.
-# TYPE queued_io_sync_background_loops counter
-queued_io_sync_background_loops 818020 1673001337599
-
-# HELP queued_io_sync_delayed Total number of requested syncs that were delayed until a later time.
-# TYPE queued_io_sync_delayed counter
-queued_io_sync_delayed 3000000 1673001337599
-
-# HELP queued_io_sync_longest_delay_us Total number of microseconds spent waiting for a sync by one or more delayed syncs.
-# TYPE queued_io_sync_longest_delay_us counter
-queued_io_sync_longest_delay_us 40513037 1673001337599
-
-# HELP queued_io_sync_shortest_delay_us Total number of microseconds spent waiting after a final delayed sync before the actual sync.
-# TYPE queued_io_sync_shortest_delay_us counter
-queued_io_sync_shortest_delay_us 1659372 1673001337599
-
-# HELP queued_io_sync_us Total number of microseconds spent in fsync and fdatasync syscalls.
-# TYPE queued_io_sync_us counter
-queued_io_sync_us 39363251 1673001337599
-
-# HELP queued_io_write_bytes Total number of bytes written.
-# TYPE queued_io_write_bytes counter
-queued_io_write_bytes 263888890 1673001337599
-
-# HELP queued_io_write Total number of write syscalls.
-# TYPE queued_io_write counter
-queued_io_write 3000000 1673001337599
-
-# HELP queued_io_write_us Total number of microseconds spent in write syscalls.
-# TYPE queued_io_write_us counter
-queued_io_write_us 246671770 1673001337599
-
-# HELP queued_missing_delete Total number of delete requests that failed due to the requested message not being found.
-# TYPE queued_missing_delete counter
-queued_missing_delete 0 1673001337599
-
-# HELP queued_successful_delete Total number of delete requests that did delete a message successfully.
-# TYPE queued_successful_delete counter
-queued_successful_delete 1000000 1673001337599
-
-# HELP queued_successful_poll Total number of poll requests that did poll a message successfully.
-# TYPE queued_successful_poll counter
-queued_successful_poll 1000000 1673001337599
-
-# HELP queued_successful_push Total number of push requests that did push a message successfully.
-# TYPE queued_successful_push counter
-queued_successful_push 1000000 1673001337599
-
-# HELP queued_suspended_delete Total number of delete requests while the endpoint was suspended.
-# TYPE queued_suspended_delete counter
-queued_suspended_delete 0 1673001337599
-
-# HELP queued_suspended_poll Total number of poll requests while the endpoint was suspended.
-# TYPE queued_suspended_poll counter
-queued_suspended_poll 0 1673001337599
-
-# HELP queued_suspended_push Total number of push requests while the endpoint was suspended.
-# TYPE queued_suspended_push counter
-queued_suspended_push 0 1673001337599
-
-# HELP queued_vacant How many more messages that can currently be pushed into the queue.
-# TYPE queued_vacant gauge
-queued_vacant 1000000 1673001337599
-```
-
 `POST /suspend` can suspend specific API endpoints, useful for temporary debugging or emergency intervention without stopping the server. It takes a request body like:
 
 ```json
@@ -183,6 +101,123 @@ queued_vacant 1000000 1673001337599
 ```
 
 Set a property to `true` to disable that endpoint, and `false` to re-enable it. Disabled endpoints will return `503 Service Unavailable`. Use `GET /suspend` to get the currently suspended endpoints.
+
+`POST /throttle` will configure poll throttling, useful for flow control and rate limiting. It takes a request body like:
+
+```json
+{
+  "throttle": {
+    "max_polls_per_time_window": 100,
+    "time_window_sec": 60,
+  }
+}
+```
+
+This will rate limit poll requests to 100 every 60 seconds. No other endpoint is throttled. Throttled requests will return `429 Too Many Requests`. Use `GET /throttle` to get the current throttle setting. To disable throttling:
+
+```json
+{
+  "throttle": null
+}
+```
+
+`GET /healthz` returns the current build version.
+
+`GET /metrics` returns metrics in the Prometheus format:
+
+```
+# HELP queued_available Amount of messages currently in the queue, including both past and future visibility timestamps.
+# TYPE queued_available gauge
+queued_available 4000000 1678522621676
+
+# HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
+# TYPE queued_empty_poll counter
+queued_empty_poll 0 1678522621676
+
+# HELP queued_io_sync_background_loops Total number of delayed sync background loop iterations.
+# TYPE queued_io_sync_background_loops counter
+queued_io_sync_background_loops 16305 1678522621676
+
+# HELP queued_io_sync Total number of fsync and fdatasync syscalls.
+# TYPE queued_io_sync counter
+queued_io_sync 204 1678522621676
+
+# HELP queued_io_sync_delayed Total number of requested syncs that were delayed until a later time.
+# TYPE queued_io_sync_delayed counter
+queued_io_sync_delayed 1000032 1678522621676
+
+# HELP queued_io_sync_longest_delay_us Total number of microseconds spent waiting for a sync by one or more delayed syncs.
+# TYPE queued_io_sync_longest_delay_us counter
+queued_io_sync_longest_delay_us 2225151 1678522621676
+
+# HELP queued_io_sync_shortest_delay_us Total number of microseconds spent waiting after a final delayed sync before the actual sync.
+# TYPE queued_io_sync_shortest_delay_us counter
+queued_io_sync_shortest_delay_us 243661 1678522621676
+
+# HELP queued_io_sync_us Total number of microseconds spent in fsync and fdatasync syscalls.
+# TYPE queued_io_sync_us counter
+queued_io_sync_us 2253905 1678522621676
+
+# HELP queued_io_write_bytes Total number of bytes written.
+# TYPE queued_io_write_bytes counter
+queued_io_write_bytes 28889146 1678522621676
+
+# HELP queued_io_write Total number of write syscalls.
+# TYPE queued_io_write counter
+queued_io_write 1000032 1678522621676
+
+# HELP queued_io_write_us Total number of microseconds spent in write syscalls.
+# TYPE queued_io_write_us counter
+queued_io_write_us 888290 1678522621676
+
+# HELP queued_missing_delete Total number of delete requests that failed due to the requested message not being found.
+# TYPE queued_missing_delete counter
+queued_missing_delete 0 1678522621676
+
+# HELP queued_missing_update Total number of update requests that failed due to the requested message not being found.
+# TYPE queued_missing_update counter
+queued_missing_update 0 1678522621676
+
+# HELP queued_successful_delete Total number of delete requests that did delete a message successfully.
+# TYPE queued_successful_delete counter
+queued_successful_delete 0 1678522621676
+
+# HELP queued_successful_poll Total number of poll requests that did poll a message successfully.
+# TYPE queued_successful_poll counter
+queued_successful_poll 0 1678522621676
+
+# HELP queued_successful_push Total number of push requests that did push a message successfully.
+# TYPE queued_successful_push counter
+queued_successful_push 16130 1678522621676
+
+# HELP queued_successful_update Total number of update requests that did update a message successfully.
+# TYPE queued_successful_update counter
+queued_successful_update 0 1678522621676
+
+# HELP queued_suspended_delete Total number of delete requests while the endpoint was suspended.
+# TYPE queued_suspended_delete counter
+queued_suspended_delete 0 1678522621676
+
+# HELP queued_suspended_poll Total number of poll requests while the endpoint was suspended.
+# TYPE queued_suspended_poll counter
+queued_suspended_poll 0 1678522621676
+
+# HELP queued_suspended_push Total number of push requests while the endpoint was suspended.
+# TYPE queued_suspended_push counter
+queued_suspended_push 0 1678522621676
+
+# HELP queued_suspended_update Total number of update requests while the endpoint was suspended.
+# TYPE queued_suspended_update counter
+queued_suspended_update 0 1678522621676
+
+# HELP queued_throttled_poll Total number of poll requests that were throttled.
+# TYPE queued_throttled_poll counter
+queued_throttled_poll 0 1678522621676
+
+# HELP queued_vacant How many more messages that can currently be pushed into the queue.
+# TYPE queued_vacant gauge
+queued_vacant 18446744073708551616 1678522621676
+```
 
 ## Important details
 

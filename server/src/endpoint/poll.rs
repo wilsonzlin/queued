@@ -49,6 +49,20 @@ pub async fn endpoint_poll(
     ));
   };
 
+  {
+    let mut throttler = ctx.throttler.lock().await;
+    if throttler.is_some() && !throttler.as_mut().unwrap().increment_count() {
+      ctx
+        .metrics
+        .throttled_poll_counter
+        .fetch_add(1, Ordering::Relaxed);
+      return Err((
+        StatusCode::TOO_MANY_REQUESTS,
+        "this poll has been throttled",
+      ));
+    };
+  };
+
   let poll_time = Utc::now();
 
   let visible_time = poll_time + Duration::seconds(req.visibility_timeout_secs);

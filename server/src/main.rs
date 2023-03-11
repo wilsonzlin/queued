@@ -7,6 +7,7 @@ pub mod ctx;
 pub mod endpoint;
 pub mod layout;
 pub mod metrics;
+pub mod throttler;
 pub mod util;
 pub mod vacant;
 
@@ -30,6 +31,8 @@ use endpoint::poll::endpoint_poll;
 use endpoint::push::endpoint_push;
 use endpoint::suspend::endpoint_get_suspend;
 use endpoint::suspend::endpoint_post_suspend;
+use endpoint::throttle::endpoint_get_throttle;
+use endpoint::throttle::endpoint_post_throttle;
 use endpoint::update::endpoint_update;
 use layout::LoadedData;
 use layout::StorageLayout;
@@ -63,6 +66,7 @@ async fn start_server_loop(
     suspend_poll: AtomicBool::new(false),
     suspend_push: AtomicBool::new(false),
     suspend_update: AtomicBool::new(false),
+    throttler: Mutex::new(None),
     vacant,
   });
 
@@ -75,6 +79,10 @@ async fn start_server_loop(
     .route(
       "/suspend",
       get(endpoint_get_suspend).post(endpoint_post_suspend),
+    )
+    .route(
+      "/throttle",
+      get(endpoint_get_throttle).post(endpoint_post_throttle),
     )
     .route("/update", post(endpoint_update))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))

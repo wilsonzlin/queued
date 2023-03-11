@@ -1,6 +1,7 @@
 use crate::available::AvailableMessages;
 use crate::layout::StorageLayout;
 use crate::metrics::Metrics;
+use crate::throttler::Throttler;
 use crate::vacant::VacantSlots;
 use seekable_async_file::SeekableAsyncFile;
 use std::sync::atomic::AtomicBool;
@@ -16,5 +17,6 @@ pub struct Ctx {
   pub suspend_update: AtomicBool,
   pub suspend_poll: AtomicBool,
   pub suspend_push: AtomicBool,
+  pub throttler: Mutex<Option<Throttler>>,
   pub vacant: Mutex<VacantSlots>,
 }

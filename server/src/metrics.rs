@@ -17,5 +17,6 @@ pub struct Metrics {
   pub suspended_poll_counter: AtomicU64,
   pub suspended_push_counter: AtomicU64,
   pub suspended_update_counter: AtomicU64,
+  pub throttled_poll_counter: AtomicU64,
   pub vacant_gauge: AtomicU64,
 }
