@@ -2,6 +2,8 @@
 
 ## Fixed slots
 
+The device is divided into fixed-length slots. Each slot is either vacant or contains a message. Creating a message acquires any vacant slot, and deleting a message makes its slot vacant. Free space is determined by how many slots are vacant.
+
 ### Cons
 
 - Messages are limited to 1 KiB, including metadata. This will be adjustable at format time in the future.
@@ -10,6 +12,8 @@
   - TODO We could use journaling instead to avoid this.
 
 ## Log structured
+
+The device is a circuar buffer of bytes, used as a log. Each operation (create, poll, update, delete) records a log entry at the tail, consuming the amount of bytes necessary for the entry. Free space is determined by the distance from the tail to the head, and is increased by moving the head past entries representing messages that have since been deleted. If the tail is near the physical end and there is not enough physical space for a message, a dummy entry is inserted into the remaining space.
 
 ### Pros
 

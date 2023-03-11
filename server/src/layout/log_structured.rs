@@ -35,6 +35,7 @@ use tokio::time::sleep;
 enum LogEntryType {
   Create,
   Delete,
+  DummyFiller,
   Poll,
   Update,
 }
@@ -67,7 +68,7 @@ const LOGENT_DELETE_SIZE: u64 = LOGENT_DELETE_OFFSETOF_INDEX + 4;
 
 #[derive(Default)]
 struct MessageState {
-  // These offsets are actual offsets i.e. after modulo by device size.
+  // These offsets are physical offsets.
   create_offset: u64,
   poll_offset: u64,
   poll_count: u32,
@@ -115,7 +116,7 @@ pub struct LogStructuredLayout {
 
 #[derive(Clone, Copy)]
 struct TailBump {
-  acquired_actual_offset: u64,
+  acquired_physical_offset: u64,
   uncommitted_virtual_offset: u64,
 }
 
@@ -129,13 +130,13 @@ impl LogStructuredLayout {
     }
   }
 
-  fn actual_offset(&self, virtual_offset: u64) -> u64 {
+  fn physical_offset(&self, virtual_offset: u64) -> u64 {
     LOGENT_START + (virtual_offset % (self.device_size - LOGENT_START))
   }
 
-  fn update_index_state_on_create(&self, index: u32, actual_offset: u64) {
+  fn update_index_state_on_create(&self, index: u32, physical_offset: u64) {
     let existing = self.index_state.insert(index, MessageState {
-      create_offset: actual_offset,
+      create_offset: physical_offset,
       ..Default::default()
     });
     assert!(existing.is_none());
@@ -145,27 +146,60 @@ impl LogStructuredLayout {
     self.index_state.remove(&index).unwrap();
   }
 
-  fn update_index_state_on_poll(&self, index: u32, actual_offset: u64) {
+  fn update_index_state_on_poll(&self, index: u32, physical_offset: u64) {
     let mut state = self.index_state.get_mut(&index).unwrap();
-    state.poll_offset = actual_offset;
+    state.poll_offset = physical_offset;
     state.poll_count += 1;
   }
 
-  // How to use: bump tail first, perform the write to the acquired tail offset, then persist the bumped tail. If tail is committed first, then it'll point to invalid data if the main data write doesn't complete.
+  // How to use: bump tail, perform the write to the acquired tail offset, then persist the bumped tail. If tail is committed before write is persisted, it'll point to invalid data if the write didn't complete.
   async fn bump_tail(&self, usage: usize) -> TailBump {
     let usage: u64 = usage.try_into().unwrap();
-    let mut state = self.log_state.lock().await;
-    let tail = state.tail;
-    // TODO Check if overlaps with head.
-    state.tail += usage;
-    let new_tail = state.tail;
-    let None = state.pending_tail_bumps.insert(new_tail, None) else {
-      unreachable!();
+    assert!(usage > 0);
+    if usage > self.device_size {
+      panic!("out of storage space");
     };
+
+    let (physical_offset, new_tail, write_filler_at) = {
+      let mut state = self.log_state.lock().await;
+      let mut physical_offset = self.physical_offset(state.tail);
+      let mut write_filler_at = None;
+      if physical_offset + usage >= self.device_size {
+        // Write after releasing lock (performance) and checking tail >= head (safety).
+        write_filler_at = Some(physical_offset);
+        let filler = self.device_size - physical_offset;
+        physical_offset += filler;
+        state.tail += filler;
+      };
+
+      state.tail += usage;
+      let new_tail = state.tail;
+      if new_tail < state.head {
+        // TODO Should this be recoverable? It would require complex redesigning to allow unwinding.
+        panic!("out of storage space");
+      };
+
+      let None = state.pending_tail_bumps.insert(new_tail, None) else {
+        unreachable!();
+      };
+      (physical_offset, new_tail, write_filler_at)
+    };
+
+    if let Some(write_filler_at) = write_filler_at {
+      self
+        .device
+        .write_at(write_filler_at, vec![LogEntryType::DummyFiller as u8])
+        .await;
+    };
+
     TailBump {
-      acquired_actual_offset: self.actual_offset(tail),
+      acquired_physical_offset: physical_offset,
       uncommitted_virtual_offset: new_tail,
     }
+  }
+
+  async fn start_background_garbage_collection_loop(&self) {
+    // TODO
   }
 
   async fn start_background_tail_bump_commit_loop(&self) {
@@ -268,39 +302,48 @@ impl StorageLayout for LogStructuredLayout {
 
     let mut virtual_offset = head;
     while virtual_offset < tail {
-      let actual_offset = self.actual_offset(virtual_offset);
-      let typ = LogEntryType::try_from(self.device.read_at(actual_offset, 1).await[0]).unwrap();
+      let physical_offset = self.physical_offset(virtual_offset);
+      let typ = LogEntryType::try_from(self.device.read_at(physical_offset, 1).await[0]).unwrap();
       match typ {
+        LogEntryType::DummyFiller => {
+          virtual_offset += self.device_size - physical_offset;
+        }
         LogEntryType::Create => {
           let raw = self
             .device
-            .read_at(actual_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
+            .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
             .await;
           let index = read_u32(&raw, LOGENT_POLL_OFFSETOF_INDEX);
           let visible_time = read_ts(&raw, LOGENT_CREATE_OFFSETOF_VISIBLE_TS);
           let len: u64 = read_u16(&raw, LOGENT_CREATE_OFFSETOF_LEN).into();
-          self.update_index_state_on_create(index, actual_offset);
+          self.update_index_state_on_create(index, physical_offset);
           available.insert(index, visible_time);
           vacant.remove_specific(index);
           virtual_offset += LOGENT_CREATE_OFFSETOF_CONTENTS + len;
         }
         LogEntryType::Poll => {
-          let raw = self.device.read_at(actual_offset, LOGENT_POLL_SIZE).await;
+          let raw = self.device.read_at(physical_offset, LOGENT_POLL_SIZE).await;
           let index = read_u32(&raw, LOGENT_POLL_OFFSETOF_INDEX);
           let visible_time = read_ts(&raw, LOGENT_POLL_OFFSETOF_VISIBLE_TS);
-          self.update_index_state_on_poll(index, actual_offset);
+          self.update_index_state_on_poll(index, physical_offset);
           available.update_timestamp(index, visible_time);
           virtual_offset += LOGENT_POLL_SIZE;
         }
         LogEntryType::Update => {
-          let raw = self.device.read_at(actual_offset, LOGENT_UPDATE_SIZE).await;
+          let raw = self
+            .device
+            .read_at(physical_offset, LOGENT_UPDATE_SIZE)
+            .await;
           let index = read_u32(&raw, LOGENT_UPDATE_OFFSETOF_INDEX);
           let visible_time = read_ts(&raw, LOGENT_UPDATE_OFFSETOF_VISIBLE_TS);
           available.update_timestamp(index, visible_time);
           virtual_offset += LOGENT_UPDATE_SIZE;
         }
         LogEntryType::Delete => {
-          let raw = self.device.read_at(actual_offset, LOGENT_DELETE_SIZE).await;
+          let raw = self
+            .device
+            .read_at(physical_offset, LOGENT_DELETE_SIZE)
+            .await;
           let index = read_u32(&raw, LOGENT_DELETE_OFFSETOF_INDEX);
           self.update_index_state_on_delete(index);
           available.remove(index);
@@ -339,7 +382,7 @@ impl StorageLayout for LogStructuredLayout {
       .device
       .write_at_with_delayed_sync(vec![WriteRequest {
         data,
-        offset: bump.acquired_actual_offset,
+        offset: bump.acquired_physical_offset,
       }])
       .await;
     self.commit_tail_bump(bump).await;
@@ -358,10 +401,11 @@ impl StorageLayout for LogStructuredLayout {
       .device
       .write_at_with_delayed_sync(vec![WriteRequest {
         data,
-        offset: bump.acquired_actual_offset,
+        offset: bump.acquired_physical_offset,
       }])
       .await;
     self.commit_tail_bump(bump).await;
+    // Ensure to do this after physically writing to disk, so GC can clean that written data if necessary.
     self.update_index_state_on_delete(index);
   }
 
@@ -406,11 +450,11 @@ impl StorageLayout for LogStructuredLayout {
       .device
       .write_at_with_delayed_sync(vec![WriteRequest {
         data,
-        offset: bump.acquired_actual_offset,
+        offset: bump.acquired_physical_offset,
       }])
       .await;
     self.commit_tail_bump(bump).await;
-    self.update_index_state_on_poll(index, bump.acquired_actual_offset);
+    self.update_index_state_on_poll(index, bump.acquired_physical_offset);
   }
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) {
@@ -454,10 +498,11 @@ impl StorageLayout for LogStructuredLayout {
       let bump = self.bump_tail(data.len()).await;
       writes.push(WriteRequest {
         data,
-        offset: bump.acquired_actual_offset,
+        offset: bump.acquired_physical_offset,
       });
       bumps.push(bump);
-      self.update_index_state_on_create(index, bump.acquired_actual_offset);
+      // Ensure to do this before physically writing to disk, so GC doesn't erase that written data.
+      self.update_index_state_on_create(index, bump.acquired_physical_offset);
     }
 
     self.device.write_at_with_delayed_sync(writes).await;
