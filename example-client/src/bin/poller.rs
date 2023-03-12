@@ -1,7 +1,7 @@
 use clap::command;
 use clap::Parser;
 use futures::future::join_all;
-use roaring::RoaringBitmap;
+use roaring::RoaringTreemap;
 use serde::Deserialize;
 use serde_json::json;
 use std::cmp::Ordering;
@@ -13,7 +13,7 @@ use tokio::time::Instant;
 #[derive(Deserialize)]
 struct PollOutputMessage {
   contents: String,
-  index: u32,
+  id: u64,
   poll_tag: String,
 }
 
@@ -27,8 +27,8 @@ async fn execute(
   connect_timeout: u64,
   request_timeout: u64,
   conn_err_cnt: Arc<AtomicU64>,
-) -> RoaringBitmap {
-  let mut bitmap = RoaringBitmap::new();
+) -> RoaringTreemap {
+  let mut bitmap = RoaringTreemap::new();
   let client = reqwest::Client::builder()
     .connect_timeout(std::time::Duration::from_secs(connect_timeout))
     .timeout(std::time::Duration::from_secs(request_timeout))
@@ -54,14 +54,14 @@ async fn execute(
       .await
       .unwrap();
     if let Some(msg) = res.message {
-      let Ok(id) = msg.contents.parse::<u32>() else {
+      let Ok(id) = msg.contents.parse::<u64>() else {
         panic!("failed to parse: {}", msg.contents);
       };
       bitmap.insert(id);
       client
         .post("http://127.0.0.1:3333/delete")
         .json(&json!({
-          "index": msg.index,
+          "id": msg.id,
           "poll_tag": msg.poll_tag,
         }))
         .send()
@@ -92,26 +92,26 @@ struct Cli {
   concurrency: u32,
 
   #[arg(long)]
-  count: u32,
+  count: u64,
 }
 
-struct RoaringBitmapRevOrdByMin(RoaringBitmap);
+struct RoaringTreemapRevOrdByMin(RoaringTreemap);
 
-impl PartialEq for RoaringBitmapRevOrdByMin {
+impl PartialEq for RoaringTreemapRevOrdByMin {
   fn eq(&self, other: &Self) -> bool {
     self.0 == other.0
   }
 }
 
-impl Eq for RoaringBitmapRevOrdByMin {}
+impl Eq for RoaringTreemapRevOrdByMin {}
 
-impl PartialOrd for RoaringBitmapRevOrdByMin {
+impl PartialOrd for RoaringTreemapRevOrdByMin {
   fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
     Some(self.0.min().unwrap().cmp(&other.0.min().unwrap()).reverse())
   }
 }
 
-impl Ord for RoaringBitmapRevOrdByMin {
+impl Ord for RoaringTreemapRevOrdByMin {
   fn cmp(&self, other: &Self) -> Ordering {
     self.partial_cmp(other).unwrap()
   }
@@ -137,7 +137,7 @@ async fn main() {
   let mut bitmaps = BinaryHeap::new();
   for bitmap in polled_ids {
     if !bitmap.is_empty() {
-      bitmaps.push(RoaringBitmapRevOrdByMin(bitmap));
+      bitmaps.push(RoaringTreemapRevOrdByMin(bitmap));
     };
   }
   let mut expected_next_id = 0;
