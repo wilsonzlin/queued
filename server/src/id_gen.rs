@@ -13,6 +13,7 @@ pub struct IdGenerator {
   journal: Arc<Journal>,
   device_offset: u64,
   next: AtomicU64,
+  committed: AtomicU64,
   uncommitted_ids: Mutex<BTreeMap<u64, Option<SignalFutureController>>>,
 }
 
@@ -27,6 +28,7 @@ impl IdGenerator {
       journal,
       device_offset,
       next: AtomicU64::new(next),
+      committed: AtomicU64::new(next),
       uncommitted_ids: Mutex::new(BTreeMap::new()),
     }
   }
@@ -44,6 +46,9 @@ impl IdGenerator {
   }
 
   pub async fn commit(&self, base: u64, n: u64) {
+    if self.committed.load(Ordering::Relaxed) >= base + n {
+      return;
+    };
     let (fut, fut_ctl) = SignalFuture::new();
     *self
       .uncommitted_ids
@@ -55,11 +60,10 @@ impl IdGenerator {
   }
 
   pub async fn start_background_commit_loop(&self) {
-    let mut committed = None;
     loop {
       sleep(std::time::Duration::from_micros(200)).await;
       let id = self.next.load(Ordering::Relaxed);
-      if Some(id) == committed {
+      if id == self.committed.load(Ordering::Relaxed) {
         continue;
       };
       self
@@ -77,7 +81,7 @@ impl IdGenerator {
         };
         e.remove_entry().1.unwrap().signal();
       }
-      committed = Some(id);
+      self.committed.store(id, Ordering::Relaxed);
     }
   }
 }

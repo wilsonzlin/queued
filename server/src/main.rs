@@ -15,6 +15,7 @@ pub mod util;
 pub mod vacant;
 pub mod visible;
 
+use crate::ctx::Ctx;
 use crate::http::start_http_server_loop;
 use crate::id_gen::IdGenerator;
 use crate::journal::Journal;
@@ -30,6 +31,7 @@ use metrics::Metrics;
 use seekable_async_file::SeekableAsyncFile;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
@@ -104,7 +106,7 @@ async fn main() {
     JOURNAL_CAPACITY,
   ));
   let id_gen =
-    IdGenerator::load_from_device(device.clone(), journal.clone(), OFFSETOF_ID_GEN).await;
+    Arc::new(IdGenerator::load_from_device(device.clone(), journal.clone(), OFFSETOF_ID_GEN).await);
 
   let layout: Arc<dyn StorageLayout + Send + Sync> = if !cli.log_structured_layout {
     Arc::new(FixedSlotsLayout::new(
@@ -146,22 +148,26 @@ async fn main() {
   let invisible = Arc::new(Mutex::new(invisible));
   let visible = Arc::new(visible);
 
-  let server_fut = start_http_server_loop(
-    cli.interface,
-    cli.port,
-    invisible.clone(),
-    visible.clone(),
-    id_gen,
-    device.clone(),
-    layout.clone(),
-    metrics,
-  );
+  let ctx = Arc::new(Ctx {
+    device: device.clone(),
+    id_gen: id_gen.clone(),
+    invisible: invisible.clone(),
+    layout: layout.clone(),
+    metrics: metrics.clone(),
+    suspend_delete: AtomicBool::new(false),
+    suspend_poll: AtomicBool::new(false),
+    suspend_push: AtomicBool::new(false),
+    suspend_update: AtomicBool::new(false),
+    throttler: Mutex::new(None),
+    visible: visible.clone(),
+  });
 
   join! {
-    server_fut,
+    start_http_server_loop(cli.interface, cli.port, ctx),
     device.start_delayed_data_sync_background_loop(),
+    id_gen.start_background_commit_loop(),
+    journal.start_commit_background_loop(),
     layout.start_background_loops(),
     visible.start_invisible_consumption_background_loop(invisible.clone()),
-    journal.start_commit_background_loop(),
   };
 }

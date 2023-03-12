@@ -9,47 +9,16 @@ use crate::endpoint::suspend::endpoint_post_suspend;
 use crate::endpoint::throttle::endpoint_get_throttle;
 use crate::endpoint::throttle::endpoint_post_throttle;
 use crate::endpoint::update::endpoint_update;
-use crate::id_gen::IdGenerator;
-use crate::invisible::InvisibleMessages;
-use crate::layout::StorageLayout;
-use crate::metrics::Metrics;
-use crate::visible::VisibleMessages;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
 use axum::Server;
-use seekable_async_file::SeekableAsyncFile;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-pub async fn start_http_server_loop(
-  interface: Ipv4Addr,
-  port: u16,
-  invisible: Arc<Mutex<InvisibleMessages>>,
-  visible: Arc<VisibleMessages>,
-  id_gen: IdGenerator,
-  device: SeekableAsyncFile,
-  layout: Arc<dyn StorageLayout + Send + Sync>,
-  metrics: Arc<Metrics>,
-) {
-  let ctx = Arc::new(Ctx {
-    device,
-    id_gen,
-    invisible,
-    layout,
-    metrics,
-    suspend_delete: AtomicBool::new(false),
-    suspend_poll: AtomicBool::new(false),
-    suspend_push: AtomicBool::new(false),
-    suspend_update: AtomicBool::new(false),
-    throttler: Mutex::new(None),
-    visible,
-  });
-
+pub async fn start_http_server_loop(interface: Ipv4Addr, port: u16, ctx: Arc<Ctx>) {
   let app = Router::new()
     .route("/delete", post(endpoint_delete))
     .route("/healthz", get(endpoint_healthz))

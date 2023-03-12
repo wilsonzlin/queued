@@ -98,7 +98,7 @@ impl Journal {
 
   pub async fn start_commit_background_loop(&self) {
     loop {
-      sleep(std::time::Duration::from_millis(1000)).await;
+      sleep(std::time::Duration::from_micros(200)).await;
 
       let mut len = 0;
       let mut raw = vec![0u8; as_usize!(OFFSETOF_ENTRIES)];

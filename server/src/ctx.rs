@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 pub struct Ctx {
   pub device: SeekableAsyncFile,
-  pub id_gen: IdGenerator,
+  pub id_gen: Arc<IdGenerator>,
   pub invisible: Arc<Mutex<InvisibleMessages>>,
   pub layout: Arc<dyn StorageLayout + Send + Sync>,
   pub metrics: Arc<Metrics>,

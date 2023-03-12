@@ -94,8 +94,9 @@ pub async fn endpoint_push(
     });
   }
 
-  ctx.layout.create_messages(creations).await;
+  // Commit ID generator state BEFORE committing messages, as otherwise generated IDs may get reused if messages persist on disk but not the ID generator state.
   ctx.id_gen.commit(base_id, n).await;
+  ctx.layout.create_messages(creations).await;
 
   {
     let mut invisible = ctx.invisible.lock().await;
