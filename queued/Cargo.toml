@@ -1,0 +1,31 @@
+[package]
+name = "queued"
+description = "Fast zero-configuration single-binary simple queue service"
+license = "Apache-2.0"
+homepage = "https://github.com/wilsonzlin/queued"
+readme = "README.md"
+keywords = ["queue", "message", "fifo"]
+categories = ["database-implementations", "web-programming"]
+repository = "https://github.com/wilsonzlin/queued.git"
+version = "0.1.0"
+authors = ["Wilson Lin <code@wilsonl.in>"]
+edition = "2021"
+
+[badges]
+maintenance = { status = "actively-developed" }
+
+[features]
+default = []
+alloc_jemalloc = ["dep:jemallocator"]
+
+[dependencies]
+axum = { version = "0.6", features = ["headers"] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.0", features = ["derive"] }
+jemallocator = { version = "0.3", optional = true }
+libqueued = { version = "0.1", path = "../libqueued" }
+seekable-async-file = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"

@@ -4,12 +4,16 @@
 
 The device is divided into fixed-length slots. Each slot is either vacant or contains a message. Creating a message acquires any vacant slot, and deleting a message makes its slot vacant. Free space is determined by how many slots are vacant.
 
+### Pros
+
+- No garbage collector pauses or unreclaimed (and therefore unusable) free space.
+- No journaling or careful serialisation of repeated writes to same locations.
+
 ### Cons
 
 - Messages are limited to 1 KiB, including metadata. This will be adjustable at format time in the future.
 - The server is limited to up to 2<sup>32</sup> (around 4 billion) messages at any time. Note that this would require 16 TiBs of storage. This is currently a simplification optimisation, and may be adjusted in the future.
 - Due to hashing, we need to read and rehash lots of data even if we only want to update a small part (e.g. one field).
-  - TODO We could use journaling instead to avoid this.
 
 ## Log structured
 
