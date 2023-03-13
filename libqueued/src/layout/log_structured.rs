@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::LinkedList;
 use std::sync::Arc;
+use tokio::join;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 
@@ -189,7 +190,72 @@ impl LogStructuredLayout {
   }
 
   async fn start_background_garbage_collection_loop(&self) {
-    // TODO
+    loop {
+      sleep(std::time::Duration::from_secs(10)).await;
+
+      let (orig_head, tail) = {
+        let state = self.log_state.lock().await;
+        (state.head, state.tail_on_disk)
+      };
+      let mut head = orig_head;
+      // SAFETY:
+      // - `head` is only ever modified by us so it's always what we expect.
+      // - `tail` can be modified by others at any time but it only ever increases. If it physically reaches `head` (i.e. out of space), we panic.
+      // - Data is never erased; only we can move the `head` to mark areas as free again but even then no data is written/cleared.
+      // - Written log entries are never mutated/written to again, so we don't have to worry about other writers.
+      // - Therefore, it's always safe to read from `head` to `tail`.
+      while head < tail {
+        let physical_offset = self.physical_offset(head);
+        let typ = LogEntryType::try_from(self.device.read_at(physical_offset, 1).await[0]).unwrap();
+        let (id, ent_size) = match typ {
+          LogEntryType::DummyFiller => {
+            head += self.device_size - physical_offset;
+            continue;
+          }
+          LogEntryType::Create => {
+            let raw = self
+              .device
+              .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
+              .await;
+            let id = read_u64(&raw, LOGENT_POLL_OFFSETOF_ID);
+            let len: u64 = read_u16(&raw, LOGENT_CREATE_OFFSETOF_LEN).into();
+            (id, LOGENT_CREATE_OFFSETOF_CONTENTS + len)
+          }
+          LogEntryType::Poll => {
+            let id = self
+              .device
+              .read_u64_at(physical_offset + LOGENT_POLL_OFFSETOF_ID)
+              .await;
+            (id, LOGENT_POLL_SIZE)
+          }
+          LogEntryType::Update => {
+            let id = self
+              .device
+              .read_u64_at(physical_offset + LOGENT_UPDATE_OFFSETOF_ID)
+              .await;
+            (id, LOGENT_UPDATE_SIZE)
+          }
+          LogEntryType::Delete => {
+            let id = self
+              .device
+              .read_u64_at(physical_offset + LOGENT_DELETE_OFFSETOF_ID)
+              .await;
+            (id, LOGENT_DELETE_SIZE)
+          }
+        };
+        if self.message_state.contains_key(&id) {
+          break;
+        };
+        head += ent_size;
+      }
+      if head != orig_head {
+        self
+          .journal
+          .write(STATE_OFFSETOF_HEAD, head.to_be_bytes().to_vec())
+          .await;
+        self.log_state.lock().await.head = head;
+      };
+    }
   }
 
   async fn start_background_tail_bump_commit_loop(&self) {
@@ -255,7 +321,10 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn start_background_loops(&self) {
-    self.start_background_tail_bump_commit_loop().await;
+    join! {
+      self.start_background_garbage_collection_loop(),
+      self.start_background_tail_bump_commit_loop(),
+    };
   }
 
   async fn format_device(&self) {
