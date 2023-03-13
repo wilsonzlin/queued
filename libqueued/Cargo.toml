@@ -30,4 +30,3 @@ seekable-async-file = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 signal-future = "0.0.1"
 tokio = { version = "1", features = ["full"] }
-tokio-util = "0.7"
