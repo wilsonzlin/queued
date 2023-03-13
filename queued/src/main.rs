@@ -88,7 +88,7 @@ async fn main() {
   .await;
 
   let queued = QueuedLoader::new(
-    device,
+    device.clone(),
     device_size,
     if cli.log_structured_layout {
       QueuedLayoutType::LogStructured
@@ -112,6 +112,7 @@ async fn main() {
 
   join! {
     start_http_server_loop(cli.interface, cli.port, ctx),
+    device.start_delayed_data_sync_background_loop(),
     queued.start(),
   };
 }

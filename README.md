@@ -78,7 +78,7 @@ queued --device /dev/my_block_device
 
 ## Performance
 
-With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 250,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64. There is minimal memory usage; only a pointer to each message's storage data is stored in memory.
+With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 300,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64. There is minimal memory usage; only a pointer to each message's storage data is stored in memory.
 
 ## Safety
 
