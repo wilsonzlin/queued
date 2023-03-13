@@ -150,13 +150,13 @@ pub struct ThrottleState {
 }
 
 impl Queued {
-  // WARNING: device.start_delayed_data_sync_background_loop() must also be running. Since it was provided, it's left up to the provider to run it.
+  // WARNING: `device.start_delayed_data_sync_background_loop()` must also be running. Since `device` was provided, it's left up to the provider to run it.
   pub async fn start(&self) {
     join! {
       self.ctx.id_gen.start_background_commit_loop(),
-      self.journal.start_commit_background_loop(),
       self.ctx.layout.start_background_loops(),
       self.ctx.visible.start_invisible_consumption_background_loop(self.ctx.invisible.clone()),
+      self.journal.start_commit_background_loop(),
     };
   }
 

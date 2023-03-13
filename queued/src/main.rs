@@ -35,9 +35,9 @@ struct Cli {
   #[arg(long)]
   device_size: Option<u64>,
 
-  /// [Advanced] Use log structured layout.
+  /// [Advanced] Use fixed slots layout.
   #[arg(long)]
-  log_structured_layout: bool,
+  fixed_slots_layout: bool,
 
   /// Format the device or file. WARNING: All existing data will be erased.
   #[arg(long)]
@@ -90,10 +90,10 @@ async fn main() {
   let queued = QueuedLoader::new(
     device.clone(),
     device_size,
-    if cli.log_structured_layout {
-      QueuedLayoutType::LogStructured
-    } else {
+    if cli.fixed_slots_layout {
       QueuedLayoutType::FixedSlots
+    } else {
+      QueuedLayoutType::LogStructured
     },
   );
 

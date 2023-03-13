@@ -82,7 +82,7 @@ With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 300,
 
 ## Safety
 
-At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are immediately visible to all other callers.
+At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted (`fdatasync`) to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are immediately visible to all other callers.
 
 It's recommended to use error-detecting-and-correcting durable storage when running in production, like any other stateful workload.
 
