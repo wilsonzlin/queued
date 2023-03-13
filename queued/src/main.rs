@@ -99,7 +99,6 @@ async fn main() {
 
   if cli.format {
     queued.format().await;
-    println!("Formatted device");
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
   };

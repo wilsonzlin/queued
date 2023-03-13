@@ -51,7 +51,7 @@ impl Journal {
     let mut raw = self.device.read_at(self.offset, OFFSETOF_ENTRIES).await;
     let len: u64 = read_u32(&raw, OFFSETOF_LEN).into();
     if len > self.capacity - OFFSETOF_ENTRIES {
-      println!("Journal is corrupt, ignoring");
+      // TODO Warn?
       return;
     };
     raw.append(
@@ -63,13 +63,12 @@ impl Journal {
     let expected_hash = blake3::hash(&raw[as_usize!(OFFSETOF_LEN)..]);
     let recorded_hash = &raw[..as_usize!(OFFSETOF_LEN)];
     if expected_hash.as_bytes() != recorded_hash {
-      println!("Journal is corrupt, ignoring");
+      // TODO Warn?
       return;
     };
     if len == 0 {
       return;
     };
-    println!("Recovering {} journal entries", len);
     let mut journal_offset = OFFSETOF_ENTRIES;
     while journal_offset < len {
       let offset = read_u64(&raw, journal_offset);
@@ -86,7 +85,6 @@ impl Journal {
       .write_at(self.offset, self.generate_blank_state())
       .await;
     self.device.sync_data().await;
-    println!("Journal recovered");
   }
 
   pub async fn write(&self, offset: u64, data: Vec<u8>) {

@@ -28,10 +28,6 @@ pub(crate) fn u64_slice_write<T: Copy>(slice: &mut [T], offset: u64, new: &[T]) 
   slice[offset..offset + len].copy_from_slice(new);
 }
 
-pub(crate) fn u64_len<T>(slice: &[T]) -> u64 {
-  slice.len().try_into().unwrap()
-}
-
 pub(crate) fn read_u16(slice: &[u8], offset: u64) -> u16 {
   u16::from_be_bytes(u64_slice(slice, offset, 2).try_into().unwrap())
 }
@@ -50,10 +46,6 @@ pub(crate) fn read_ts(slice: &[u8], offset: u64) -> DateTime<Utc> {
       i64::from_be_bytes(u64_slice(slice, offset, 8).try_into().unwrap()) * 1000,
     )
     .unwrap()
-}
-
-pub(crate) fn now() -> i64 {
-  Utc::now().timestamp()
 }
 
 pub(crate) fn repeated_copy<T: Copy>(dest: &mut [T], src: &[T]) {

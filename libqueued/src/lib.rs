@@ -40,7 +40,6 @@ use suspend::SuspendState;
 use throttler::Throttler;
 use tokio::join;
 use tokio::sync::Mutex;
-use tokio::time::Instant;
 
 const OFFSETOF_JOURNAL: u64 = 0;
 const JOURNAL_CAPACITY: u64 = 1024 * 1024;
@@ -113,17 +112,10 @@ impl QueuedLoader {
     // Ensure journal has been recovered first before loading any other data, including ID generator state.
     self.id_gen.load_from_device().await;
 
-    let load_started = Instant::now();
     let LoadedData { invisible, visible } = self
       .layout
       .load_data_from_device(self.metrics.clone())
       .await;
-    println!(
-      "Verified and loaded data on device in {:.2} seconds",
-      load_started.elapsed().as_secs_f64()
-    );
-    println!("Invisible messages: {}", invisible.len());
-    println!("Visible messages: {}", visible.len().await);
 
     let invisible = Arc::new(Mutex::new(invisible));
     let visible = Arc::new(visible);
