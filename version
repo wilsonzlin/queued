@@ -106,7 +106,7 @@ for (const f of [
 }
 
 for (const f of ["queued/Cargo.toml"]) {
-  replaceInFile(f, /^(queued = )"\d+\.\d+\.\d+"/m, `$1"${NEW_VERSION}"`);
+  replaceInFile(f, /^(libqueued = \{ version = )"\d+\.\d+\.\d+"/m, `$1"${NEW_VERSION}"`);
 }
 
 cmd("git", "add", "-A");
