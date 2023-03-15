@@ -26,6 +26,7 @@ use signal_future::SignalFutureController;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::LinkedList;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
@@ -90,6 +91,7 @@ pub(crate) struct LogStructuredLayout {
   device_offset: u64,
   device_size: u64,
   message_state: DashMap<u64, MessageState>,
+  metrics: Arc<Metrics>,
   log_state: Mutex<LogState>,
   journal: Arc<Journal>,
 }
@@ -106,6 +108,7 @@ impl LogStructuredLayout {
     device_offset: u64,
     device_size: u64,
     journal: Arc<Journal>,
+    metrics: Arc<Metrics>,
   ) -> Self {
     Self {
       device,
@@ -114,6 +117,7 @@ impl LogStructuredLayout {
       message_state: DashMap::new(),
       log_state: Mutex::new(LogState::default()),
       journal,
+      metrics,
     }
   }
 
@@ -147,7 +151,7 @@ impl LogStructuredLayout {
   async fn bump_tail(&self, usage: usize) -> TailBump {
     let usage: u64 = usage.try_into().unwrap();
     assert!(usage > 0);
-    if usage > self.device_size {
+    if usage > self.device_size - self.device_offset {
       panic!("out of storage space");
     };
 
@@ -172,6 +176,10 @@ impl LogStructuredLayout {
       let None = state.pending_tail_bumps.insert(new_tail, None) else {
         unreachable!();
       };
+      self
+        .metrics
+        .free_space_gauge
+        .store(state.tail - state.head, Ordering::Relaxed);
       (physical_offset, new_tail, write_filler_at)
     };
 
@@ -253,7 +261,12 @@ impl LogStructuredLayout {
           .journal
           .write(STATE_OFFSETOF_HEAD, head.to_be_bytes().to_vec())
           .await;
-        self.log_state.lock().await.head = head;
+        let mut state = self.log_state.lock().await;
+        state.head = head;
+        self
+          .metrics
+          .free_space_gauge
+          .store(state.tail - state.head, Ordering::Relaxed);
       };
     }
   }
@@ -356,6 +369,10 @@ impl StorageLayout for LogStructuredLayout {
       .device
       .read_u64_at(self.device_offset + STATE_OFFSETOF_TAIL)
       .await;
+    self
+      .metrics
+      .free_space_gauge
+      .store(tail - head, Ordering::Relaxed);
     {
       let mut log_state = self.log_state.lock().await;
       log_state.head = head;

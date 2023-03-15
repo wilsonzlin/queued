@@ -84,7 +84,10 @@ impl FixedSlotsLayout {
       device_offset,
       device_size,
       message_state: DashMap::new(),
-      vacant: Arc::new(Mutex::new(VacantSlots::new(metrics))),
+      vacant: Arc::new(Mutex::new(VacantSlots::new(
+        (device_size - device_offset) / SLOT_LEN,
+        metrics,
+      ))),
     }
   }
 }

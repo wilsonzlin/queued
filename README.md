@@ -95,8 +95,9 @@ Performing backups can be done by stopping the process and taking a copy of the 
 ```json
 {
   "delete": true,
-  "poll": true,
-  "push": false
+  "poll": false,
+  "push": false,
+  "update": true
 }
 ```
 

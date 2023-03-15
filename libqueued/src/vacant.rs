@@ -6,15 +6,24 @@ use std::sync::Arc;
 
 pub(crate) struct VacantSlots {
   bitmap: Bitmap,
+  capacity: u64,
   metrics: Arc<Metrics>,
 }
 
 impl VacantSlots {
-  pub fn new(metrics: Arc<Metrics>) -> VacantSlots {
+  pub fn new(capacity: u64, metrics: Arc<Metrics>) -> VacantSlots {
     VacantSlots {
       bitmap: Bitmap::create(),
+      capacity,
       metrics,
     }
+  }
+
+  fn update_metrics(&self) {
+    self
+      .metrics
+      .free_space_gauge
+      .store(self.capacity - self.bitmap.cardinality(), Ordering::Relaxed);
   }
 
   pub fn fill(&mut self, from: u32, to_exc: u32) {
@@ -25,7 +34,7 @@ impl VacantSlots {
     if !self.bitmap.add_checked(index) {
       panic!("slot already exists");
     };
-    self.metrics.vacant_gauge.fetch_add(1, Ordering::Relaxed);
+    self.update_metrics();
   }
 
   pub fn remove_specific(&mut self, index: u32) {
@@ -42,7 +51,7 @@ impl VacantSlots {
     let index = self.bitmap.minimum();
     if let Some(index) = index {
       self.bitmap.remove(index);
-      self.metrics.vacant_gauge.fetch_sub(1, Ordering::Relaxed);
+      self.update_metrics();
     };
     index
   }
@@ -53,10 +62,7 @@ impl VacantSlots {
       self
         .bitmap
         .remove_range(indices[0]..=*indices.last().unwrap());
-      self
-        .metrics
-        .vacant_gauge
-        .fetch_sub(indices.len().try_into().unwrap(), Ordering::Relaxed);
+      self.update_metrics();
     };
     indices
   }

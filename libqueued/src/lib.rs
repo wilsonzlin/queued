@@ -87,6 +87,7 @@ impl QueuedLoader {
         OFFSETOF_DATA,
         device_size,
         journal.clone(),
+        metrics.clone(),
       )),
     };
 

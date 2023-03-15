@@ -76,6 +76,16 @@ pub async fn endpoint_metrics(
 
   write_metric_line!(
     json,
+    ctx.queued.metrics().free_space_gauge(),
+    out,
+    free_space,
+    gauge,
+    ts,
+    "How much free space remains on the device."
+  );
+
+  write_metric_line!(
+    json,
     ctx.queued.metrics().invisible_gauge(),
     out,
     invisible,
@@ -282,16 +292,6 @@ pub async fn endpoint_metrics(
     counter,
     ts,
     "Total number of poll requests that were throttled."
-  );
-
-  write_metric_line!(
-    json,
-    ctx.queued.metrics().vacant_gauge(),
-    out,
-    vacant,
-    gauge,
-    ts,
-    "How many more messages that can currently be pushed into the queue."
   );
 
   write_metric_line!(
