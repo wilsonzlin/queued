@@ -24,7 +24,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 jemallocator = { version = "0.3", optional = true }
 libqueued = { version = "0.3.0", path = "../libqueued" }
-seekable-async-file = "0.3"
+seekable-async-file = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }

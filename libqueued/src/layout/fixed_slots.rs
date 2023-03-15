@@ -242,14 +242,8 @@ impl StorageLayout for FixedSlotsLayout {
     self
       .device
       .write_at_with_delayed_sync(vec![
-        WriteRequest {
-          data: hash.as_bytes().to_vec(),
-          offset: slot_offset + SLOT_OFFSETOF_HASH,
-        },
-        WriteRequest {
-          data: visible_time_bytes,
-          offset: slot_offset + SLOT_OFFSETOF_VISIBLE_TS,
-        },
+        WriteRequest::new(slot_offset + SLOT_OFFSETOF_HASH, hash.as_bytes().to_vec()),
+        WriteRequest::new(slot_offset + SLOT_OFFSETOF_VISIBLE_TS, visible_time_bytes),
       ])
       .await;
   }
@@ -258,10 +252,10 @@ impl StorageLayout for FixedSlotsLayout {
     let index = self.message_state.remove(&id).unwrap().1.slot_index;
     self
       .device
-      .write_at_with_delayed_sync(vec![WriteRequest {
-        data: SLOT_VACANT_TEMPLATE.clone(),
-        offset: self.slot_offset(index),
-      }])
+      .write_at_with_delayed_sync(vec![WriteRequest::new(
+        self.slot_offset(index),
+        SLOT_VACANT_TEMPLATE.clone(),
+      )])
       .await;
     self.vacant.lock().await.add(index);
   }
@@ -313,10 +307,7 @@ impl StorageLayout for FixedSlotsLayout {
 
     self
       .device
-      .write_at_with_delayed_sync(vec![WriteRequest {
-        data: slot_data,
-        offset: self.slot_offset(index),
-      }])
+      .write_at_with_delayed_sync(vec![WriteRequest::new(self.slot_offset(index), slot_data)])
       .await;
   }
 
@@ -350,10 +341,7 @@ impl StorageLayout for FixedSlotsLayout {
       let hash = blake3::hash(&slot_data[32..]);
       slot_data.write_slice_at(SLOT_OFFSETOF_HASH, hash.as_bytes());
 
-      writes.push(WriteRequest {
-        data: slot_data,
-        offset: self.slot_offset(index),
-      });
+      writes.push(WriteRequest::new(self.slot_offset(index), slot_data));
     }
 
     self.device.write_at_with_delayed_sync(writes).await;

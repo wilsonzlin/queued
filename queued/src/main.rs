@@ -47,14 +47,6 @@ struct Cli {
   #[arg(long, default_value = "127.0.0.1")]
   interface: Ipv4Addr,
 
-  /// [Advanced] Use O_DIRECT.
-  #[arg(long, default_value_t = false)]
-  io_direct: bool,
-
-  /// [Advanced] Use O_DSYNC.
-  #[arg(long, default_value_t = false)]
-  io_dsync: bool,
-
   /// Port for server to listen on. Defaults to 3333.
   #[arg(long, default_value_t = 3333)]
   port: u16,
@@ -82,8 +74,7 @@ async fn main() {
     device_size,
     io_metrics.clone(),
     std::time::Duration::from_micros(DELAYED_SYNC_US),
-    cli.io_direct,
-    cli.io_dsync,
+    0,
   )
   .await;
 

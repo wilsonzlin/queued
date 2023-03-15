@@ -12,21 +12,17 @@ use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::iter;
 use futures::StreamExt;
+use log_structured::GarbageCheck;
+use log_structured::GarbageChecker;
+use log_structured::LogStructured;
 use num_enum::TryFromPrimitive;
 use off64::usz;
 use off64::Off64;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
-use signal_future::SignalFuture;
-use signal_future::SignalFutureController;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::LinkedList;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::join;
-use tokio::sync::Mutex;
-use tokio::time::sleep;
 use write_journal::WriteJournal;
 
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +34,6 @@ enum LogEntryType {
   Poll,
   Update,
 }
-
-const STATE_OFFSETOF_HEAD: u64 = 0;
-const STATE_OFFSETOF_TAIL: u64 = STATE_OFFSETOF_HEAD + 8;
-const STATE_SIZE: u64 = STATE_OFFSETOF_TAIL + 8;
-
-const LOGENT_START: u64 = STATE_SIZE;
 
 const LOGENT_OFFSETOF_TYPE: u64 = 0;
 
@@ -73,30 +63,63 @@ struct MessageState {
   poll_count: u32,
 }
 
-#[derive(Default)]
-struct LogState {
-  head: u64,
-  tail: u64,
-  // This is to prevent the scenario where a write at a later offset (i.e. subsequent request B) finishes before a write at an earlier offset (i.e. earlier request A); we can't immediately update the tail on disk after writing B because it would include A, which hasn't been synced yet.
-  pending_tail_bumps: BTreeMap<u64, Option<SignalFutureController>>,
-  // Necessary for GC to know where to safely read up to. `tail` may point past pending/partially-written data.
-  tail_on_disk: u64,
+struct LogEntryGarbageChecker {
+  device: SeekableAsyncFile,
+  message_state: Arc<DashMap<u64, MessageState>>,
+}
+
+#[async_trait]
+impl GarbageChecker for LogEntryGarbageChecker {
+  async fn check_offset(&self, physical_offset: u64) -> GarbageCheck {
+    let typ = LogEntryType::try_from(self.device.read_at(physical_offset, 1).await[0]).unwrap();
+    let (id, ent_size) = match typ {
+      LogEntryType::DummyFiller => {
+        return GarbageCheck::IsPadding;
+      }
+      LogEntryType::Create => {
+        let raw = self
+          .device
+          .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
+          .await;
+        let id = raw.read_u64_be_at(LOGENT_POLL_OFFSETOF_ID);
+        let len: u64 = raw.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
+        (id, LOGENT_CREATE_OFFSETOF_CONTENTS + len)
+      }
+      LogEntryType::Poll => {
+        let id = self
+          .device
+          .read_u64_at(physical_offset + LOGENT_POLL_OFFSETOF_ID)
+          .await;
+        (id, LOGENT_POLL_SIZE)
+      }
+      LogEntryType::Update => {
+        let id = self
+          .device
+          .read_u64_at(physical_offset + LOGENT_UPDATE_OFFSETOF_ID)
+          .await;
+        (id, LOGENT_UPDATE_SIZE)
+      }
+      LogEntryType::Delete => {
+        let id = self
+          .device
+          .read_u64_at(physical_offset + LOGENT_DELETE_OFFSETOF_ID)
+          .await;
+        (id, LOGENT_DELETE_SIZE)
+      }
+    };
+    if self.message_state.contains_key(&id) {
+      GarbageCheck::IsNotGarbage
+    } else {
+      GarbageCheck::IsGarbage(ent_size)
+    }
+  }
 }
 
 pub(crate) struct LogStructuredLayout {
-  device: SeekableAsyncFile,
-  device_offset: u64,
   device_size: u64,
-  message_state: DashMap<u64, MessageState>,
-  metrics: Arc<Metrics>,
-  log_state: Mutex<LogState>,
-  journal: Arc<WriteJournal>,
-}
-
-#[derive(Clone, Copy)]
-struct TailBump {
-  acquired_physical_offset: u64,
-  uncommitted_virtual_offset: u64,
+  device: SeekableAsyncFile,
+  log_structured: LogStructured<LogEntryGarbageChecker>,
+  message_state: Arc<DashMap<u64, MessageState>>,
 }
 
 impl LogStructuredLayout {
@@ -107,23 +130,25 @@ impl LogStructuredLayout {
     journal: Arc<WriteJournal>,
     metrics: Arc<Metrics>,
   ) -> Self {
-    Self {
-      device,
+    let message_state = Arc::new(DashMap::new());
+    let log_structured = LogStructured::new(
+      device.clone(),
       device_offset,
       device_size,
-      message_state: DashMap::new(),
-      log_state: Mutex::new(LogState::default()),
-      journal,
-      metrics,
+      journal.clone(),
+      LogEntryGarbageChecker {
+        device: device.clone(),
+        message_state: message_state.clone(),
+      },
+      vec![LogEntryType::DummyFiller as u8],
+      metrics.free_space_gauge.clone(),
+    );
+    Self {
+      device: device.clone(),
+      device_size,
+      log_structured,
+      message_state: message_state.clone(),
     }
-  }
-
-  fn reserved_size(&self) -> u64 {
-    self.device_offset + LOGENT_START
-  }
-
-  fn physical_offset(&self, virtual_offset: u64) -> u64 {
-    self.reserved_size() + (virtual_offset % (self.device_size - self.reserved_size()))
   }
 
   fn update_message_state_on_create(&self, id: u64, physical_offset: u64) {
@@ -143,185 +168,6 @@ impl LogStructuredLayout {
     state.poll_offset = physical_offset;
     state.poll_count += 1;
   }
-
-  // How to use: bump tail, perform the write to the acquired tail offset, then persist the bumped tail. If tail is committed before write is persisted, it'll point to invalid data if the write didn't complete.
-  async fn bump_tail(&self, usage: usize) -> TailBump {
-    let usage: u64 = usage.try_into().unwrap();
-    assert!(usage > 0);
-    if usage > self.device_size - self.device_offset {
-      panic!("out of storage space");
-    };
-
-    let (physical_offset, new_tail, write_filler_at) = {
-      let mut state = self.log_state.lock().await;
-      let mut physical_offset = self.physical_offset(state.tail);
-      let mut write_filler_at = None;
-      if physical_offset + usage >= self.device_size {
-        // Write after releasing lock (performance) and checking tail >= head (safety).
-        write_filler_at = Some(physical_offset);
-        let filler = self.device_size - physical_offset;
-        physical_offset = self.reserved_size();
-        state.tail += filler;
-      };
-
-      state.tail += usage;
-      let new_tail = state.tail;
-      if new_tail - state.head > self.device_size - self.reserved_size() {
-        panic!("out of storage space");
-      };
-
-      let None = state.pending_tail_bumps.insert(new_tail, None) else {
-        unreachable!();
-      };
-      self
-        .metrics
-        .free_space_gauge
-        .store(state.tail - state.head, Ordering::Relaxed);
-      (physical_offset, new_tail, write_filler_at)
-    };
-
-    if let Some(write_filler_at) = write_filler_at {
-      // TODO Prove safety.
-      self
-        .device
-        .write_at(write_filler_at, vec![LogEntryType::DummyFiller as u8])
-        .await;
-    };
-
-    TailBump {
-      acquired_physical_offset: physical_offset,
-      uncommitted_virtual_offset: new_tail,
-    }
-  }
-
-  async fn start_background_garbage_collection_loop(&self) {
-    loop {
-      sleep(std::time::Duration::from_secs(10)).await;
-
-      let (orig_head, tail) = {
-        let state = self.log_state.lock().await;
-        (state.head, state.tail_on_disk)
-      };
-      let mut head = orig_head;
-      // SAFETY:
-      // - `head` is only ever modified by us so it's always what we expect.
-      // - `tail` can be modified by others at any time but it only ever increases. If it physically reaches `head` (i.e. out of space), we panic.
-      // - Data is never erased; only we can move the `head` to mark areas as free again but even then no data is written/cleared.
-      // - Written log entries are never mutated/written to again, so we don't have to worry about other writers.
-      // - Therefore, it's always safe to read from `head` to `tail`.
-      while head < tail {
-        let physical_offset = self.physical_offset(head);
-        let typ = LogEntryType::try_from(self.device.read_at(physical_offset, 1).await[0]).unwrap();
-        let (id, ent_size) = match typ {
-          LogEntryType::DummyFiller => {
-            head += self.device_size - physical_offset;
-            continue;
-          }
-          LogEntryType::Create => {
-            let raw = self
-              .device
-              .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
-              .await;
-            let id = raw.read_u64_be_at(LOGENT_POLL_OFFSETOF_ID);
-            let len: u64 = raw.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
-            (id, LOGENT_CREATE_OFFSETOF_CONTENTS + len)
-          }
-          LogEntryType::Poll => {
-            let id = self
-              .device
-              .read_u64_at(physical_offset + LOGENT_POLL_OFFSETOF_ID)
-              .await;
-            (id, LOGENT_POLL_SIZE)
-          }
-          LogEntryType::Update => {
-            let id = self
-              .device
-              .read_u64_at(physical_offset + LOGENT_UPDATE_OFFSETOF_ID)
-              .await;
-            (id, LOGENT_UPDATE_SIZE)
-          }
-          LogEntryType::Delete => {
-            let id = self
-              .device
-              .read_u64_at(physical_offset + LOGENT_DELETE_OFFSETOF_ID)
-              .await;
-            (id, LOGENT_DELETE_SIZE)
-          }
-        };
-        if self.message_state.contains_key(&id) {
-          break;
-        };
-        head += ent_size;
-      }
-      if head != orig_head {
-        self
-          .journal
-          .write(STATE_OFFSETOF_HEAD, head.to_be_bytes().to_vec())
-          .await;
-        let mut state = self.log_state.lock().await;
-        state.head = head;
-        self
-          .metrics
-          .free_space_gauge
-          .store(state.tail - state.head, Ordering::Relaxed);
-      };
-    }
-  }
-
-  async fn start_background_tail_bump_commit_loop(&self) {
-    loop {
-      sleep(std::time::Duration::from_micros(200)).await;
-
-      let mut to_resolve = vec![];
-      let mut new_tail_to_write = None;
-      {
-        let mut state = self.log_state.lock().await;
-        loop {
-          let Some(e) = state.pending_tail_bumps.first_entry() else {
-            break;
-          };
-          if e.get().is_none() {
-            break;
-          };
-          let (k, fut_state) = e.remove_entry();
-          to_resolve.push(fut_state.unwrap());
-          new_tail_to_write = Some(k);
-        }
-        if let Some(tail) = new_tail_to_write {
-          state.tail_on_disk = tail;
-        };
-      };
-
-      if let Some(new_tail_to_write) = new_tail_to_write {
-        self
-          .journal
-          .write(
-            STATE_OFFSETOF_TAIL,
-            new_tail_to_write.to_be_bytes().to_vec(),
-          )
-          .await;
-
-        for ft in to_resolve {
-          ft.signal();
-        }
-      };
-    }
-  }
-
-  async fn commit_tail_bump(&self, bump: TailBump) {
-    let (fut, fut_ctl) = SignalFuture::new();
-
-    {
-      let mut state = self.log_state.lock().await;
-
-      *state
-        .pending_tail_bumps
-        .get_mut(&bump.uncommitted_virtual_offset)
-        .unwrap() = Some(fut_ctl.clone());
-    };
-
-    fut.await;
-  }
 }
 
 #[async_trait]
@@ -331,54 +177,23 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn start_background_loops(&self) {
-    join! {
-      self.start_background_garbage_collection_loop(),
-      self.start_background_tail_bump_commit_loop(),
-    };
+    self.log_structured.start_background_loops().await;
   }
 
   async fn format_device(&self) {
-    self
-      .device
-      .write_at(
-        self.device_offset + STATE_OFFSETOF_HEAD,
-        0u64.to_be_bytes().to_vec(),
-      )
-      .await;
-    self
-      .device
-      .write_at(
-        self.device_offset + STATE_OFFSETOF_TAIL,
-        0u64.to_be_bytes().to_vec(),
-      )
-      .await;
+    self.log_structured.format_device().await;
   }
 
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData {
+    self.log_structured.load_state_from_device().await;
+
     // Since we guarantee that messages are polled in order of visibility time, we can't directly insert into VisibleMessages, we'll need to sort them first. Note that an earlier poll can make an earlier message have a visibility timeout later than a later message, so we can't use our log structured layout to our advantage here, nor directly insert into InvisibleMessages either.
     let mut messages = HashMap::<u64, DateTime<Utc>>::new();
-
-    let head = self
-      .device
-      .read_u64_at(self.device_offset + STATE_OFFSETOF_HEAD)
-      .await;
-    let tail = self
-      .device
-      .read_u64_at(self.device_offset + STATE_OFFSETOF_TAIL)
-      .await;
-    self
-      .metrics
-      .free_space_gauge
-      .store(tail - head, Ordering::Relaxed);
-    {
-      let mut log_state = self.log_state.lock().await;
-      log_state.head = head;
-      log_state.tail = tail;
-    };
+    let (head, tail) = self.log_structured.get_head_and_tail().await;
 
     let mut virtual_offset = head;
     while virtual_offset < tail {
-      let physical_offset = self.physical_offset(virtual_offset);
+      let physical_offset = self.log_structured.physical_offset(virtual_offset);
       let typ = LogEntryType::try_from(self.device.read_at(physical_offset, 1).await[0]).unwrap();
       match typ {
         LogEntryType::DummyFiller => {
@@ -460,30 +275,24 @@ impl StorageLayout for LogStructuredLayout {
     data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Update as u8;
     data.write_u64_be_at(LOGENT_UPDATE_OFFSETOF_ID, id);
     data.write_timestamp_be_at(LOGENT_UPDATE_OFFSETOF_VISIBLE_TS, visible_time);
-    let bump = self.bump_tail(data.len()).await;
+    let bump = self.log_structured.bump_tail(data.len()).await;
     self
       .device
-      .write_at_with_delayed_sync(vec![WriteRequest {
-        data,
-        offset: bump.acquired_physical_offset,
-      }])
+      .write_at_with_delayed_sync(vec![WriteRequest::new(bump.acquired_physical_offset, data)])
       .await;
-    self.commit_tail_bump(bump).await;
+    self.log_structured.commit_tail_bump(bump).await;
   }
 
   async fn delete_message(&self, id: u64) {
     let mut data = vec![0u8; usz!(LOGENT_DELETE_SIZE)];
     data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Delete as u8;
     data.write_u64_be_at(LOGENT_DELETE_OFFSETOF_ID, id);
-    let bump = self.bump_tail(data.len()).await;
+    let bump = self.log_structured.bump_tail(data.len()).await;
     self
       .device
-      .write_at_with_delayed_sync(vec![WriteRequest {
-        data,
-        offset: bump.acquired_physical_offset,
-      }])
+      .write_at_with_delayed_sync(vec![WriteRequest::new(bump.acquired_physical_offset, data)])
       .await;
-    self.commit_tail_bump(bump).await;
+    self.log_structured.commit_tail_bump(bump).await;
     // Ensure to do this after physically writing to disk, so GC can clean that written data if necessary.
     self.update_message_state_on_delete(id);
   }
@@ -520,15 +329,12 @@ impl StorageLayout for LogStructuredLayout {
     data.write_u64_be_at(LOGENT_POLL_OFFSETOF_ID, id);
     data.write_slice_at(LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
     data.write_timestamp_be_at(LOGENT_POLL_OFFSETOF_VISIBLE_TS, update.visible_time);
-    let bump = self.bump_tail(data.len()).await;
+    let bump = self.log_structured.bump_tail(data.len()).await;
     self
       .device
-      .write_at_with_delayed_sync(vec![WriteRequest {
-        data,
-        offset: bump.acquired_physical_offset,
-      }])
+      .write_at_with_delayed_sync(vec![WriteRequest::new(bump.acquired_physical_offset, data)])
       .await;
-    self.commit_tail_bump(bump).await;
+    self.log_structured.commit_tail_bump(bump).await;
     self.update_message_state_on_poll(id, bump.acquired_physical_offset);
   }
 
@@ -553,11 +359,8 @@ impl StorageLayout for LogStructuredLayout {
         u16::try_from(contents.len()).unwrap(),
       );
       data.write_slice_at(LOGENT_CREATE_OFFSETOF_CONTENTS, contents.as_bytes());
-      let bump = self.bump_tail(data.len()).await;
-      writes.push(WriteRequest {
-        data,
-        offset: bump.acquired_physical_offset,
-      });
+      let bump = self.log_structured.bump_tail(data.len()).await;
+      writes.push(WriteRequest::new(bump.acquired_physical_offset, data));
       bumps.push(bump);
       // Ensure to do this before physically writing to disk, so GC doesn't erase that written data.
       self.update_message_state_on_create(id, bump.acquired_physical_offset);
@@ -566,7 +369,7 @@ impl StorageLayout for LogStructuredLayout {
     self.device.write_at_with_delayed_sync(writes).await;
     iter(bumps)
       .for_each_concurrent(None, |bump| async move {
-        self.commit_tail_bump(bump).await;
+        self.log_structured.commit_tail_bump(bump).await;
       })
       .await;
   }

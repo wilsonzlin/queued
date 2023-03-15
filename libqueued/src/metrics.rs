@@ -1,10 +1,11 @@
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 #[derive(Default)]
 pub struct Metrics {
   pub(crate) empty_poll_counter: AtomicU64,
-  pub(crate) free_space_gauge: AtomicU64, // We report free space instead of used as otherwise we'd need to also consider space used outside of storage layout (e.g. journal).
+  pub(crate) free_space_gauge: Arc<AtomicU64>, // We report free space instead of used as otherwise we'd need to also consider space used outside of storage layout (e.g. journal).
   pub(crate) invisible_gauge: AtomicU64,
   pub(crate) missing_delete_counter: AtomicU64,
   pub(crate) missing_update_counter: AtomicU64,
