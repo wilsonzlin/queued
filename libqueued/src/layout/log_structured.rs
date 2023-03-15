@@ -4,13 +4,7 @@ use super::MessageOnDisk;
 use super::MessagePoll;
 use super::StorageLayout;
 use crate::invisible::InvisibleMessages;
-use crate::journal::Journal;
 use crate::metrics::Metrics;
-use crate::util::as_usize;
-use crate::util::read_ts;
-use crate::util::read_u16;
-use crate::util::read_u64;
-use crate::util::u64_slice_write;
 use crate::visible::VisibleMessages;
 use async_trait::async_trait;
 use chrono::DateTime;
@@ -19,6 +13,8 @@ use dashmap::DashMap;
 use futures::stream::iter;
 use futures::StreamExt;
 use num_enum::TryFromPrimitive;
+use off64::usz;
+use off64::Off64;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use signal_future::SignalFuture;
@@ -31,6 +27,7 @@ use std::sync::Arc;
 use tokio::join;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
+use write_journal::WriteJournal;
 
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -93,7 +90,7 @@ pub(crate) struct LogStructuredLayout {
   message_state: DashMap<u64, MessageState>,
   metrics: Arc<Metrics>,
   log_state: Mutex<LogState>,
-  journal: Arc<Journal>,
+  journal: Arc<WriteJournal>,
 }
 
 #[derive(Clone, Copy)]
@@ -107,7 +104,7 @@ impl LogStructuredLayout {
     device: SeekableAsyncFile,
     device_offset: u64,
     device_size: u64,
-    journal: Arc<Journal>,
+    journal: Arc<WriteJournal>,
     metrics: Arc<Metrics>,
   ) -> Self {
     Self {
@@ -225,8 +222,8 @@ impl LogStructuredLayout {
               .device
               .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
               .await;
-            let id = read_u64(&raw, LOGENT_POLL_OFFSETOF_ID);
-            let len: u64 = read_u16(&raw, LOGENT_CREATE_OFFSETOF_LEN).into();
+            let id = raw.read_u64_be_at(LOGENT_POLL_OFFSETOF_ID);
+            let len: u64 = raw.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
             (id, LOGENT_CREATE_OFFSETOF_CONTENTS + len)
           }
           LogEntryType::Poll => {
@@ -392,17 +389,17 @@ impl StorageLayout for LogStructuredLayout {
             .device
             .read_at(physical_offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
             .await;
-          let id = read_u64(&raw, LOGENT_POLL_OFFSETOF_ID);
-          let visible_time = read_ts(&raw, LOGENT_CREATE_OFFSETOF_VISIBLE_TS);
-          let len: u64 = read_u16(&raw, LOGENT_CREATE_OFFSETOF_LEN).into();
+          let id = raw.read_u64_be_at(LOGENT_POLL_OFFSETOF_ID);
+          let visible_time = raw.read_timestamp_be_at(LOGENT_CREATE_OFFSETOF_VISIBLE_TS);
+          let len: u64 = raw.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
           self.update_message_state_on_create(id, physical_offset);
           messages.insert(id, visible_time);
           virtual_offset += LOGENT_CREATE_OFFSETOF_CONTENTS + len;
         }
         LogEntryType::Poll => {
           let raw = self.device.read_at(physical_offset, LOGENT_POLL_SIZE).await;
-          let id = read_u64(&raw, LOGENT_POLL_OFFSETOF_ID);
-          let visible_time = read_ts(&raw, LOGENT_POLL_OFFSETOF_VISIBLE_TS);
+          let id = raw.read_u64_be_at(LOGENT_POLL_OFFSETOF_ID);
+          let visible_time = raw.read_timestamp_be_at(LOGENT_POLL_OFFSETOF_VISIBLE_TS);
           self.update_message_state_on_poll(id, physical_offset);
           messages.insert(id, visible_time);
           virtual_offset += LOGENT_POLL_SIZE;
@@ -412,8 +409,8 @@ impl StorageLayout for LogStructuredLayout {
             .device
             .read_at(physical_offset, LOGENT_UPDATE_SIZE)
             .await;
-          let id = read_u64(&raw, LOGENT_UPDATE_OFFSETOF_ID);
-          let visible_time = read_ts(&raw, LOGENT_UPDATE_OFFSETOF_VISIBLE_TS);
+          let id = raw.read_u64_be_at(LOGENT_UPDATE_OFFSETOF_ID);
+          let visible_time = raw.read_timestamp_be_at(LOGENT_UPDATE_OFFSETOF_VISIBLE_TS);
           messages.insert(id, visible_time);
           virtual_offset += LOGENT_UPDATE_SIZE;
         }
@@ -422,7 +419,7 @@ impl StorageLayout for LogStructuredLayout {
             .device
             .read_at(physical_offset, LOGENT_DELETE_SIZE)
             .await;
-          let id = read_u64(&raw, LOGENT_DELETE_OFFSETOF_ID);
+          let id = raw.read_u64_be_at(LOGENT_DELETE_OFFSETOF_ID);
           self.update_message_state_on_delete(id);
           messages.remove(&id).unwrap();
           virtual_offset += LOGENT_DELETE_SIZE;
@@ -459,14 +456,10 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn update_visibility_time(&self, id: u64, visible_time: DateTime<Utc>) {
-    let mut data = vec![0u8; as_usize!(LOGENT_UPDATE_SIZE)];
-    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Update as u8;
-    u64_slice_write(&mut data, LOGENT_UPDATE_OFFSETOF_ID, &id.to_be_bytes());
-    u64_slice_write(
-      &mut data,
-      LOGENT_UPDATE_OFFSETOF_VISIBLE_TS,
-      &visible_time.timestamp().to_be_bytes(),
-    );
+    let mut data = vec![0u8; usz!(LOGENT_UPDATE_SIZE)];
+    data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Update as u8;
+    data.write_u64_be_at(LOGENT_UPDATE_OFFSETOF_ID, id);
+    data.write_timestamp_be_at(LOGENT_UPDATE_OFFSETOF_VISIBLE_TS, visible_time);
     let bump = self.bump_tail(data.len()).await;
     self
       .device
@@ -479,9 +472,9 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn delete_message(&self, id: u64) {
-    let mut data = vec![0u8; as_usize!(LOGENT_DELETE_SIZE)];
-    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Delete as u8;
-    u64_slice_write(&mut data, LOGENT_DELETE_OFFSETOF_ID, &id.to_be_bytes());
+    let mut data = vec![0u8; usz!(LOGENT_DELETE_SIZE)];
+    data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Delete as u8;
+    data.write_u64_be_at(LOGENT_DELETE_OFFSETOF_ID, id);
     let bump = self.bump_tail(data.len()).await;
     self
       .device
@@ -504,8 +497,8 @@ impl StorageLayout for LogStructuredLayout {
       .read_at(offset, LOGENT_CREATE_OFFSETOF_CONTENTS)
       .await;
 
-    let created = read_ts(&slot_data, LOGENT_CREATE_OFFSETOF_CREATED_TS);
-    let len: u64 = read_u16(&slot_data, LOGENT_CREATE_OFFSETOF_LEN).into();
+    let created = slot_data.read_timestamp_be_at(LOGENT_CREATE_OFFSETOF_CREATED_TS);
+    let len: u64 = slot_data.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
     let contents = String::from_utf8(
       self
         .device
@@ -522,15 +515,11 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn mark_as_polled(&self, id: u64, update: MessagePoll) {
-    let mut data = vec![0u8; as_usize!(LOGENT_POLL_SIZE)];
-    data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Poll as u8;
-    u64_slice_write(&mut data, LOGENT_POLL_OFFSETOF_ID, &id.to_be_bytes());
-    u64_slice_write(&mut data, LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
-    u64_slice_write(
-      &mut data,
-      LOGENT_POLL_OFFSETOF_VISIBLE_TS,
-      &update.visible_time.timestamp().to_be_bytes(),
-    );
+    let mut data = vec![0u8; usz!(LOGENT_POLL_SIZE)];
+    data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Poll as u8;
+    data.write_u64_be_at(LOGENT_POLL_OFFSETOF_ID, id);
+    data.write_slice_at(LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
+    data.write_timestamp_be_at(LOGENT_POLL_OFFSETOF_VISIBLE_TS, update.visible_time);
     let bump = self.bump_tail(data.len()).await;
     self
       .device
@@ -554,29 +543,16 @@ impl StorageLayout for LogStructuredLayout {
       ..
     } in creations
     {
-      let mut data = vec![0u8; as_usize!(LOGENT_CREATE_OFFSETOF_CONTENTS) + contents.len()];
-      data[as_usize!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Create as u8;
-      u64_slice_write(&mut data, LOGENT_CREATE_OFFSETOF_ID, &id.to_be_bytes());
-      u64_slice_write(
-        &mut data,
-        LOGENT_CREATE_OFFSETOF_CREATED_TS,
-        &Utc::now().timestamp().to_be_bytes(),
-      );
-      u64_slice_write(
-        &mut data,
-        LOGENT_CREATE_OFFSETOF_VISIBLE_TS,
-        &visible_time.timestamp().to_be_bytes(),
-      );
-      u64_slice_write(
-        &mut data,
+      let mut data = vec![0u8; usz!(LOGENT_CREATE_OFFSETOF_CONTENTS) + contents.len()];
+      data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Create as u8;
+      data.write_u64_be_at(LOGENT_CREATE_OFFSETOF_ID, id);
+      data.write_timestamp_be_at(LOGENT_CREATE_OFFSETOF_CREATED_TS, Utc::now());
+      data.write_timestamp_be_at(LOGENT_CREATE_OFFSETOF_VISIBLE_TS, visible_time);
+      data.write_u16_be_at(
         LOGENT_CREATE_OFFSETOF_LEN,
-        &u16::try_from(contents.len()).unwrap().to_be_bytes(),
+        u16::try_from(contents.len()).unwrap(),
       );
-      u64_slice_write(
-        &mut data,
-        LOGENT_CREATE_OFFSETOF_CONTENTS,
-        contents.as_bytes(),
-      );
+      data.write_slice_at(LOGENT_CREATE_OFFSETOF_CONTENTS, contents.as_bytes());
       let bump = self.bump_tail(data.len()).await;
       writes.push(WriteRequest {
         data,

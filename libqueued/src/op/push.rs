@@ -2,9 +2,9 @@ use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
 use crate::layout::MessageCreation;
-use crate::util::as_usize;
 use chrono::Duration;
 use chrono::Utc;
+use off64::usz;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
@@ -56,7 +56,7 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
   let mut to_add_visible = Vec::new();
   let mut creations = Vec::new();
   for (i, msg) in req.messages.into_iter().enumerate() {
-    if msg.contents.len() > as_usize!(ctx.layout.max_contents_len()) {
+    if msg.contents.len() > usz!(ctx.layout.max_contents_len()) {
       errors.push(OpPushOutputError {
         index: i,
         typ: OpPushOutputErrorType::ContentsTooLarge,

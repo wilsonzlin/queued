@@ -1,4 +1,3 @@
-use crate::journal::Journal;
 use seekable_async_file::SeekableAsyncFile;
 use signal_future::SignalFuture;
 use signal_future::SignalFutureController;
@@ -8,9 +7,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
+use write_journal::WriteJournal;
 
 pub(crate) struct IdGenerator {
-  journal: Arc<Journal>,
+  journal: Arc<WriteJournal>,
   device: SeekableAsyncFile,
   device_offset: u64,
   next: AtomicU64,
@@ -19,7 +19,7 @@ pub(crate) struct IdGenerator {
 }
 
 impl IdGenerator {
-  pub fn new(device: SeekableAsyncFile, journal: Arc<Journal>, device_offset: u64) -> Self {
+  pub fn new(device: SeekableAsyncFile, journal: Arc<WriteJournal>, device_offset: u64) -> Self {
     Self {
       journal,
       device,

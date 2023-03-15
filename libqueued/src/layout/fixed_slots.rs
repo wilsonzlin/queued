@@ -5,14 +5,7 @@ use super::MessagePoll;
 use super::StorageLayout;
 use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
-use crate::util::as_usize;
-use crate::util::read_ts;
-use crate::util::read_u16;
-use crate::util::read_u32;
-use crate::util::read_u64;
 use crate::util::repeated_copy;
-use crate::util::u64_slice;
-use crate::util::u64_slice_write;
 use crate::vacant::VacantSlots;
 use crate::visible::VisibleMessages;
 use async_trait::async_trait;
@@ -22,6 +15,8 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
+use off64::usz;
+use off64::Off64;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::cmp::min;
@@ -52,7 +47,7 @@ const MESSAGE_SLOT_CONTENTS_LEN_MAX: u64 = SLOT_LEN - SLOT_FIXED_FIELDS_LEN;
 
 lazy_static! {
   static ref SLOT_VACANT_TEMPLATE: Vec<u8> = {
-    let mut slot_template = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN)];
+    let mut slot_template = vec![0u8; usz!(SLOT_FIXED_FIELDS_LEN)];
     let hash = blake3::hash(&slot_template[32..]);
     slot_template[..32].copy_from_slice(hash.as_bytes());
     slot_template
@@ -114,13 +109,13 @@ impl StorageLayout for FixedSlotsLayout {
   async fn start_background_loops(&self) {}
 
   async fn format_device(&self) {
-    let mut template_base_padded = vec![0u8; as_usize!(SLOT_LEN)];
-    template_base_padded[..as_usize!(SLOT_FIXED_FIELDS_LEN)].copy_from_slice(&SLOT_VACANT_TEMPLATE);
+    let mut template_base_padded = vec![0u8; usz!(SLOT_LEN)];
+    template_base_padded[..usz!(SLOT_FIXED_FIELDS_LEN)].copy_from_slice(&SLOT_VACANT_TEMPLATE);
 
     let mut template = vec![
       0u8;
       min(
-        as_usize!(self.device_size - self.device_offset),
+        usz!(self.device_size - self.device_offset),
         1024 * 1024 * 1024
       )
     ];
@@ -133,7 +128,7 @@ impl StorageLayout for FixedSlotsLayout {
         .device
         .write_at(
           next,
-          template[..min(template.len(), as_usize!(self.device_size - next))].to_vec(),
+          template[..min(template.len(), usz!(self.device_size - next))].to_vec(),
         )
         .await;
       next += template_len;
@@ -148,7 +143,7 @@ impl StorageLayout for FixedSlotsLayout {
     // Since we guarantee that messages are polled in order of visibility time, we can't directly insert into VisibleMessages, we'll need to sort them first.
     let visible_unsorted = Arc::new(Mutex::new(Vec::new()));
 
-    futures::stream::iter((self.device_offset..self.device_size).step_by(as_usize!(SLOT_LEN)))
+    futures::stream::iter((self.device_offset..self.device_size).step_by(usz!(SLOT_LEN)))
       .for_each_concurrent(None, |offset| {
         let invisible = invisible.clone();
         let visible_unsorted = visible_unsorted.clone();
@@ -157,18 +152,18 @@ impl StorageLayout for FixedSlotsLayout {
         async move {
           let mut slot_data = self.device.read_at(offset, SLOT_LEN).await;
 
-          let hash_includes_contents = slot_data[as_usize!(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS)];
+          let hash_includes_contents = slot_data[usz!(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS)];
           match hash_includes_contents {
-            0 => slot_data.truncate(as_usize!(SLOT_FIXED_FIELDS_LEN)),
+            0 => slot_data.truncate(usz!(SLOT_FIXED_FIELDS_LEN)),
             1 => {
-              let content_len: u64 = read_u16(&slot_data, SLOT_OFFSETOF_LEN).into();
+              let content_len: u64 = slot_data.read_u16_be_at(SLOT_OFFSETOF_LEN).into();
               if content_len > SLOT_LEN - SLOT_FIXED_FIELDS_LEN {
                 panic!(
                   "data corruption: slot at {} contains invalid content length",
                   offset
                 );
               }
-              slot_data.truncate(as_usize!(SLOT_FIXED_FIELDS_LEN + content_len));
+              slot_data.truncate(usz!(SLOT_FIXED_FIELDS_LEN + content_len));
             }
             _ => panic!(
               "data corruption: slot at {} contains invalid content hashing indicator",
@@ -187,12 +182,12 @@ impl StorageLayout for FixedSlotsLayout {
             );
           }
 
-          let state = SlotState::try_from(slot_data[as_usize!(SLOT_OFFSETOF_STATE)]).unwrap();
+          let state = SlotState::try_from(slot_data[usz!(SLOT_OFFSETOF_STATE)]).unwrap();
           let slot_index = self.slot_index(offset);
-          let id = read_u64(&slot_data, SLOT_OFFSETOF_ID);
+          let id = slot_data.read_u64_be_at(SLOT_OFFSETOF_ID);
           match state {
             SlotState::Available => {
-              let visible_time = read_ts(&slot_data, SLOT_OFFSETOF_VISIBLE_TS);
+              let visible_time = slot_data.read_timestamp_be_at(SLOT_OFFSETOF_VISIBLE_TS);
               if visible_time <= now {
                 visible_unsorted.lock().await.push((id, visible_time));
               } else {
@@ -241,11 +236,7 @@ impl StorageLayout for FixedSlotsLayout {
     let slot_offset = self.slot_offset(index);
     let mut slot_data = self.device.read_at(slot_offset, SLOT_LEN).await;
     let visible_time_bytes = visible_time.timestamp().to_be_bytes().to_vec();
-    u64_slice_write(
-      &mut slot_data,
-      SLOT_OFFSETOF_VISIBLE_TS,
-      &visible_time_bytes,
-    );
+    slot_data.write_slice_at(SLOT_OFFSETOF_VISIBLE_TS, &visible_time_bytes);
     let hash = blake3::hash(&slot_data[32..]);
 
     self
@@ -279,11 +270,15 @@ impl StorageLayout for FixedSlotsLayout {
     let index = self.message_state.get(&id).unwrap().slot_index;
     let slot_data = self.device.read_at(self.slot_offset(index), SLOT_LEN).await;
 
-    let created = read_ts(&slot_data, SLOT_OFFSETOF_CREATED_TS);
-    let poll_count = read_u32(&slot_data, SLOT_OFFSETOF_POLL_COUNT);
-    let len: u64 = read_u16(&slot_data, SLOT_OFFSETOF_LEN).into();
-    let contents =
-      String::from_utf8(u64_slice(&slot_data, SLOT_OFFSETOF_CONTENTS, len).to_vec()).unwrap();
+    let created = slot_data.read_timestamp_be_at(SLOT_OFFSETOF_CREATED_TS);
+    let poll_count = slot_data.read_u32_be_at(SLOT_OFFSETOF_POLL_COUNT);
+    let len: u64 = slot_data.read_u16_be_at(SLOT_OFFSETOF_LEN).into();
+    let contents = String::from_utf8(
+      slot_data
+        .read_slice_at(SLOT_OFFSETOF_CONTENTS, len)
+        .to_vec(),
+    )
+    .unwrap();
 
     MessageOnDisk {
       created,
@@ -308,23 +303,13 @@ impl StorageLayout for FixedSlotsLayout {
       .read_at(self.slot_offset(index), SLOT_FIXED_FIELDS_LEN)
       .await;
 
-    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[0]);
-    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
-      SlotState::Available as u8
-    ]);
-    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_POLL_TAG, &poll_tag);
-    u64_slice_write(
-      &mut slot_data,
-      SLOT_OFFSETOF_VISIBLE_TS,
-      &visible_time.timestamp().to_be_bytes(),
-    );
-    u64_slice_write(
-      &mut slot_data,
-      SLOT_OFFSETOF_POLL_COUNT,
-      &poll_count.to_be_bytes(),
-    );
+    slot_data.write_slice_at(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[0]);
+    slot_data.write_slice_at(SLOT_OFFSETOF_STATE, &[SlotState::Available as u8]);
+    slot_data.write_slice_at(SLOT_OFFSETOF_POLL_TAG, &poll_tag);
+    slot_data.write_timestamp_be_at(SLOT_OFFSETOF_VISIBLE_TS, visible_time);
+    slot_data.write_u32_be_at(SLOT_OFFSETOF_POLL_COUNT, poll_count);
     let hash = blake3::hash(&slot_data[32..]);
-    u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
+    slot_data.write_slice_at(SLOT_OFFSETOF_HASH, hash.as_bytes());
 
     self
       .device
@@ -352,32 +337,18 @@ impl StorageLayout for FixedSlotsLayout {
     ) in creations.into_iter().enumerate()
     {
       let index = indices[i];
-      let mut slot_data = vec![0u8; as_usize!(SLOT_FIXED_FIELDS_LEN) + contents.len()];
+      let mut slot_data = vec![0u8; usz!(SLOT_FIXED_FIELDS_LEN) + contents.len()];
 
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[1]);
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_STATE, &[
-        SlotState::Available as u8
-      ]);
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_ID, &id.to_be_bytes());
-      u64_slice_write(
-        &mut slot_data,
-        SLOT_OFFSETOF_CREATED_TS,
-        &Utc::now().timestamp().to_be_bytes(),
-      );
-      u64_slice_write(
-        &mut slot_data,
-        SLOT_OFFSETOF_VISIBLE_TS,
-        &visible_time.timestamp().to_be_bytes(),
-      );
-      u64_slice_write(
-        &mut slot_data,
-        SLOT_OFFSETOF_LEN,
-        &u16::try_from(contents.len()).unwrap().to_be_bytes(),
-      );
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_CONTENTS, contents.as_bytes());
+      slot_data.write_slice_at(SLOT_OFFSETOF_HASH_INCLUDES_CONTENTS, &[1]);
+      slot_data.write_slice_at(SLOT_OFFSETOF_STATE, &[SlotState::Available as u8]);
+      slot_data.write_u64_be_at(SLOT_OFFSETOF_ID, id);
+      slot_data.write_timestamp_be_at(SLOT_OFFSETOF_CREATED_TS, Utc::now());
+      slot_data.write_timestamp_be_at(SLOT_OFFSETOF_VISIBLE_TS, visible_time);
+      slot_data.write_u16_be_at(SLOT_OFFSETOF_LEN, u16::try_from(contents.len()).unwrap());
+      slot_data.write_slice_at(SLOT_OFFSETOF_CONTENTS, contents.as_bytes());
 
       let hash = blake3::hash(&slot_data[32..]);
-      u64_slice_write(&mut slot_data, SLOT_OFFSETOF_HASH, hash.as_bytes());
+      slot_data.write_slice_at(SLOT_OFFSETOF_HASH, hash.as_bytes());
 
       writes.push(WriteRequest {
         data: slot_data,

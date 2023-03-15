@@ -25,8 +25,10 @@ hex = "0.4"
 itertools = "0.10"
 lazy_static = "1.4"
 num_enum = "0.5"
+off64 = { version = "0.1", features = ["chrono"] }
 rand = "0.8"
 seekable-async-file = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 signal-future = "0.0.1"
 tokio = { version = "1", features = ["full"] }
+write-journal = "0.1.0"

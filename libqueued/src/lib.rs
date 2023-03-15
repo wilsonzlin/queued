@@ -1,7 +1,6 @@
 pub mod ctx;
 pub mod id_gen;
 pub mod invisible;
-pub mod journal;
 pub mod layout;
 pub mod metrics;
 pub mod op;
@@ -14,7 +13,6 @@ pub mod visible;
 use crate::layout::LoadedData;
 use ctx::Ctx;
 use id_gen::IdGenerator;
-use journal::Journal;
 use layout::fixed_slots::FixedSlotsLayout;
 use layout::log_structured::LogStructuredLayout;
 use layout::StorageLayout;
@@ -40,6 +38,7 @@ use suspend::SuspendState;
 use throttler::Throttler;
 use tokio::join;
 use tokio::sync::Mutex;
+use write_journal::WriteJournal;
 
 const OFFSETOF_JOURNAL: u64 = 0;
 const JOURNAL_CAPACITY: u64 = 1024 * 1024;
@@ -49,7 +48,7 @@ const OFFSETOF_DATA: u64 = OFFSETOF_ID_GEN + 8;
 pub struct QueuedLoader {
   device: SeekableAsyncFile,
   id_gen: Arc<IdGenerator>,
-  journal: Arc<Journal>,
+  journal: Arc<WriteJournal>,
   layout: Arc<dyn StorageLayout + Send + Sync>,
   metrics: Arc<Metrics>,
 }
@@ -64,7 +63,7 @@ impl QueuedLoader {
   pub fn new(device: SeekableAsyncFile, device_size: u64, layout_type: QueuedLayoutType) -> Self {
     let metrics = Arc::new(Metrics::default());
 
-    let journal = Arc::new(Journal::new(
+    let journal = Arc::new(WriteJournal::new(
       device.clone(),
       OFFSETOF_JOURNAL,
       JOURNAL_CAPACITY,
@@ -140,7 +139,7 @@ impl QueuedLoader {
 
 #[derive(Clone)]
 pub struct Queued {
-  journal: Arc<Journal>,
+  journal: Arc<WriteJournal>,
   ctx: Arc<Ctx>,
 }
 
