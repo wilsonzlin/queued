@@ -1,3 +1,4 @@
+use off64::Off64Int;
 use seekable_async_file::SeekableAsyncFile;
 use signal_future::SignalFuture;
 use signal_future::SignalFutureController;
@@ -7,6 +8,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
+use write_journal::AtomicWriteGroup;
 use write_journal::WriteJournal;
 
 pub(crate) struct IdGenerator {
@@ -31,7 +33,11 @@ impl IdGenerator {
   }
 
   pub async fn load_from_device(&self) {
-    let next = self.device.read_u64_at(self.device_offset).await;
+    let next = self
+      .device
+      .read_at(self.device_offset, 8)
+      .await
+      .read_u64_be_at(0);
     self.next.store(next, Ordering::Relaxed);
     self.committed.store(next, Ordering::Relaxed);
   }
@@ -64,7 +70,10 @@ impl IdGenerator {
       if id != self.committed.load(Ordering::Relaxed) {
         self
           .journal
-          .write(self.device_offset, id.to_be_bytes().to_vec())
+          .write(AtomicWriteGroup(vec![(
+            self.device_offset,
+            id.to_be_bytes().to_vec(),
+          )]))
           .await;
       };
       // TODO Use split_off or drain_range.

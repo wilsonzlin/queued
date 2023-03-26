@@ -17,7 +17,9 @@ use log_structured::GarbageChecker;
 use log_structured::LogStructured;
 use num_enum::TryFromPrimitive;
 use off64::usz;
-use off64::Off64;
+use off64::Off64Chrono;
+use off64::Off64Int;
+use off64::Off64Slice;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::HashMap;
@@ -88,22 +90,25 @@ impl GarbageChecker for LogEntryGarbageChecker {
       LogEntryType::Poll => {
         let id = self
           .device
-          .read_u64_at(physical_offset + LOGENT_POLL_OFFSETOF_ID)
-          .await;
+          .read_at(physical_offset + LOGENT_POLL_OFFSETOF_ID, 8)
+          .await
+          .read_u64_be_at(0);
         (id, LOGENT_POLL_SIZE)
       }
       LogEntryType::Update => {
         let id = self
           .device
-          .read_u64_at(physical_offset + LOGENT_UPDATE_OFFSETOF_ID)
-          .await;
+          .read_at(physical_offset + LOGENT_UPDATE_OFFSETOF_ID, 8)
+          .await
+          .read_u64_be_at(0);
         (id, LOGENT_UPDATE_SIZE)
       }
       LogEntryType::Delete => {
         let id = self
           .device
-          .read_u64_at(physical_offset + LOGENT_DELETE_OFFSETOF_ID)
-          .await;
+          .read_at(physical_offset + LOGENT_DELETE_OFFSETOF_ID, 8)
+          .await
+          .read_u64_be_at(0);
         (id, LOGENT_DELETE_SIZE)
       }
     };

@@ -11,15 +11,12 @@ use clap::command;
 use clap::Parser;
 use libqueued::QueuedLayoutType;
 use libqueued::QueuedLoader;
+use seekable_async_file::get_file_len_via_seek;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::SeekableAsyncFileMetrics;
-use std::io::SeekFrom;
 use std::net::Ipv4Addr;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
-use tokio::io::AsyncSeekExt;
 use tokio::join;
 
 const DELAYED_SYNC_US: u64 = 100;
@@ -52,19 +49,15 @@ struct Cli {
   port: u16,
 }
 
-async fn get_device_size(path: &Path) -> u64 {
-  let mut file = File::open(path).await.unwrap();
-  // Note that `file.metadata().len()` is 0 for device files.
-  file.seek(SeekFrom::End(0)).await.unwrap()
-}
-
 #[tokio::main]
 async fn main() {
   let cli = Cli::parse();
 
   let device_size = match cli.device_size {
     Some(s) => s,
-    None => get_device_size(&cli.device).await,
+    None => get_file_len_via_seek(&cli.device)
+      .await
+      .expect("seek device file"),
   };
 
   let io_metrics = Arc::new(SeekableAsyncFileMetrics::default());

@@ -4,12 +4,12 @@ Fast zero-configuration single-binary simple queue service.
 
 - Introspect and query contents, and push and delete in huge batches.
 - Programmatic or temporary flow control with rate limiting and suspension.
-- Fast I/O with underlying storage with minimal writes and API-guaranteed durability.
+- Fast I/O with minimal writes and strong API-guaranteed durability.
 - Available as simple library for direct integration into larger programs.
 
 ## Quick start
 
-queued requires persistent storage, and it's preferred to provide a block device directly (e.g. `/dev/my_block_device`), to bypass the file system. Alternatively, a standard file can be used too (e.g. `/var/lib/queued/data`). In either case, the entire device/file will be used.
+queued requires persistent storage, and it's preferred to provide a block device directly (e.g. `/dev/my_block_device`) to bypass the file system for higher performance. Alternatively, a standard file can be used too (e.g. `/var/lib/queued/data`). In either case, the entire device/file will be used.
 
 ### Install
 
@@ -78,15 +78,19 @@ queued --device /dev/my_block_device
 
 ## Performance
 
-With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 300,000 operations (push, poll, or delete) per second with 4,096 concurrent clients and a batch size of 64. There is minimal memory usage; only a pointer to each message's storage data is stored in memory.
+### Single node
+
+With a single Intel Alder Lake CPU core and NVMe SSD, queued manages around 300,000 operations (push, poll, update, or delete) per second with 4,096 concurrent clients and a batch size of 64. There is minimal memory usage; only metadata of each message is stored in memory.
+
+As every operation is durably persisted to the underlying storage, the storage I/O performance can quickly become a bottleneck. Consider using RAID 0 and tuning the write latency for better performance.
 
 ## Safety
 
 At the API layer, only a successful response (i.e. `2xx`) means that the request has been successfully persisted (`fdatasync`) to disk. Assume any interrupted or failed requests did not safely get stored, and retry as appropriate. Changes are immediately visible to all other callers.
 
-It's recommended to use error-detecting-and-correcting durable storage when running in production, like any other stateful workload.
+It's recommended to use error-correcting durable storage when running in production, like any other stateful workload.
 
-Performing backups can be done by stopping the process and taking a copy of the contents of the file/device. Using compression can reduce bandwidth (when transferring) and storage usage.
+Performing backups can be done by stopping the process and taking a copy of the contents of the file/device.
 
 ## Management
 
@@ -228,18 +232,16 @@ queued_visible 4000000 1678525380549
 
 - Messages are delivered in order of their visibility time. Messages visible at the same time may be delivered in any order. Messages will never be delivered before their visibility time, but may be delivered a few seconds later. Polled messages could be updated or deleted a few seconds after their visibility time for the same reason.
 - The ID and poll tag values are unique and opaque.
-- If you require more than one queue (e.g. channels), run multiple servers.
+- If you require more than one queue (e.g. channels), check out [jobd](https://github.com/wilsonzlin/jobd).
+- There is no limit on the size of a message. The HTTP API has a limit of 128 MiB per request body.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.
 - The process will exit when disk space is exhausted.
 
 ## Development
 
-queued is a standard Rust project, and does not require any special build tools or system libraries.
-
-As the design and functionality is quite simple, I/O tends to become the bottleneck at scale (and at smaller throughputs, the performance is more than enough). This is important to know when profiling and optimising.
-
 Clients in [example-client](./example-client/) can help with running synthetic workloads for stress testing, performance tuning, and profiling.
 
 As I/O becomes the main attention for optimisation, keep in mind:
+- We assume [powersafe overwrites](https://www.sqlite.org/psow.html) i.e. a `write` won't affect any data outside of the target range.
 - `write` syscall data is immediately visible to all `read` syscalls in all threads and processes.
-- `write` syscalls **can** be reordered, unless `fdatasync`/`fsync` is used, which acts as both a barrier and cache-flusher. This means that a fast sequence of `write` (1 create) -> `read` (2 inspect) -> `write` (3 update) can actually cause 1 to clobber 3. Ideally there would be two different APIs for creating a barrier and flushing the cache.
+- `write` syscalls **can** be reordered, unless `fdatasync`/`fsync` is used, which acts as both a barrier and cache-flusher. This means that a fast sequence of `write` (1: create) -> `read` (2: inspect) -> `write` (3: update) can actually cause 1 to clobber 3. Ideally there would be two different APIs for creating a barrier and flushing the cache.
