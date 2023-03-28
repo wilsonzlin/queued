@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct OpPushInputMessage {
-  contents: String,
-  visibility_timeout_secs: i64,
+  pub contents: String,
+  pub visibility_timeout_secs: i64,
 }
 
 #[derive(Deserialize)]
 pub struct OpPushInput {
-  messages: Vec<OpPushInputMessage>,
+  pub messages: Vec<OpPushInputMessage>,
 }
 
 #[derive(Serialize)]
@@ -29,13 +29,13 @@ pub enum OpPushOutputErrorType {
 
 #[derive(Serialize)]
 pub struct OpPushOutputError {
-  typ: OpPushOutputErrorType,
-  index: usize,
+  pub typ: OpPushOutputErrorType,
+  pub index: usize,
 }
 
 #[derive(Serialize)]
 pub struct OpPushOutput {
-  errors: Vec<OpPushOutputError>,
+  pub errors: Vec<OpPushOutputError>,
 }
 
 pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushOutput> {

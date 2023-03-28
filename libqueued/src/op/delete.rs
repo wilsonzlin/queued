@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 #[derive(Serialize, Deserialize)]
 pub struct OpDeleteInput {
-  id: u64,
-  poll_tag: String,
+  pub id: u64,
+  pub poll_tag: String,
 }
 
 #[derive(Serialize, Deserialize)]

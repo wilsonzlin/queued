@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct OpUpdateInput {
-  id: u64,
-  poll_tag: String,
-  visibility_timeout_secs: i64,
+  pub id: u64,
+  pub poll_tag: String,
+  pub visibility_timeout_secs: i64,
 }
 
 #[derive(Serialize)]

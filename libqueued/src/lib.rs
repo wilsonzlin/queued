@@ -100,13 +100,15 @@ impl QueuedLoader {
   }
 
   pub async fn format(&self) {
-    self.journal.format_device().await;
-    self.id_gen.format_device().await;
-    self.layout.format_device().await;
+    join! {
+      self.journal.format_device(),
+      self.id_gen.format_device(),
+      self.layout.format_device(),
+    };
     self.device.sync_data().await;
   }
 
-  pub async fn load(&self) -> Queued {
+  pub async fn load(self) -> Queued {
     self.journal.recover().await;
 
     // Ensure journal has been recovered first before loading any other data, including ID generator state.
@@ -121,18 +123,18 @@ impl QueuedLoader {
     let visible = Arc::new(visible);
 
     let ctx = Arc::new(Ctx {
-      id_gen: self.id_gen.clone(),
-      invisible: invisible.clone(),
-      layout: self.layout.clone(),
-      metrics: self.metrics.clone(),
+      id_gen: self.id_gen,
+      invisible,
+      layout: self.layout,
+      metrics: self.metrics,
       suspension: Arc::new(SuspendState::default()),
       throttler: Mutex::new(None),
-      visible: visible.clone(),
+      visible,
     });
 
     Queued {
       ctx,
-      journal: self.journal.clone(),
+      journal: self.journal,
     }
   }
 }

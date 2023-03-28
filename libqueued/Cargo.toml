@@ -3,7 +3,6 @@ name = "libqueued"
 description = "Library for queued"
 license = "SSPL-1.0"
 homepage = "https://github.com/wilsonzlin/queued"
-readme = "README.md"
 keywords = ["queue", "message", "fifo"]
 categories = ["database-implementations", "web-programming"]
 repository = "https://github.com/wilsonzlin/queued.git"

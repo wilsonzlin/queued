@@ -15,21 +15,21 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct OpPollInput {
-  visibility_timeout_secs: i64,
+  pub visibility_timeout_secs: i64,
 }
 
 #[derive(Serialize)]
 pub struct OpPollOutputMessage {
-  contents: String,
-  created: DateTime<Utc>,
-  id: u64,
-  poll_count: u32,
-  poll_tag: String,
+  pub contents: String,
+  pub created: DateTime<Utc>,
+  pub id: u64,
+  pub poll_count: u32,
+  pub poll_tag: String,
 }
 
 #[derive(Serialize)]
 pub struct OpPollOutput {
-  message: Option<OpPollOutputMessage>,
+  pub message: Option<OpPollOutputMessage>,
 }
 
 pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollOutput> {
