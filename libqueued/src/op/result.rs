@@ -1,3 +1,4 @@
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum OpError {
   InvalidPollTag,
   MessageNotFound,
