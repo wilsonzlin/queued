@@ -20,11 +20,11 @@ pub struct OpPollInput {
 
 #[derive(Serialize)]
 pub struct OpPollOutputMessage {
-  pub contents: String,
+  pub contents: Vec<u8>,
   pub created: DateTime<Utc>,
   pub id: u64,
   pub poll_count: u32,
-  pub poll_tag: String,
+  pub poll_tag: Vec<u8>,
 }
 
 #[derive(Serialize)]
@@ -61,7 +61,6 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
 
   let mut poll_tag = vec![0u8; 30];
   thread_rng().fill_bytes(&mut poll_tag);
-  let poll_tag_hex = hex::encode(&poll_tag);
 
   let MessageOnDisk {
     contents,
@@ -74,7 +73,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
   ctx
     .layout
     .mark_as_polled(id, MessagePoll {
-      poll_tag,
+      poll_tag: poll_tag.clone(),
       visible_time,
       poll_count: new_poll_count,
     })
@@ -93,7 +92,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
       created,
       id,
       poll_count: new_poll_count,
-      poll_tag: poll_tag_hex,
+      poll_tag,
     }),
   })
 }

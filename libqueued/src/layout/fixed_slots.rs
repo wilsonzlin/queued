@@ -269,12 +269,9 @@ impl StorageLayout for FixedSlotsLayout {
     let created = slot_data.read_timestamp_be_at(SLOT_OFFSETOF_CREATED_TS);
     let poll_count = slot_data.read_u32_be_at(SLOT_OFFSETOF_POLL_COUNT);
     let len: u64 = slot_data.read_u16_be_at(SLOT_OFFSETOF_LEN).into();
-    let contents = String::from_utf8(
-      slot_data
-        .read_slice_at(SLOT_OFFSETOF_CONTENTS, len)
-        .to_vec(),
-    )
-    .unwrap();
+    let contents = slot_data
+      .read_slice_at(SLOT_OFFSETOF_CONTENTS, len)
+      .to_vec();
 
     MessageOnDisk {
       created,
@@ -338,7 +335,7 @@ impl StorageLayout for FixedSlotsLayout {
       slot_data.write_timestamp_be_at(SLOT_OFFSETOF_CREATED_TS, Utc::now());
       slot_data.write_timestamp_be_at(SLOT_OFFSETOF_VISIBLE_TS, visible_time);
       slot_data.write_u16_be_at(SLOT_OFFSETOF_LEN, u16::try_from(contents.len()).unwrap());
-      slot_data.write_slice_at(SLOT_OFFSETOF_CONTENTS, contents.as_bytes());
+      slot_data.write_slice_at(SLOT_OFFSETOF_CONTENTS, &contents);
 
       let hash = blake3::hash(&slot_data[32..]);
       slot_data.write_slice_at(SLOT_OFFSETOF_HASH, hash.as_bytes());

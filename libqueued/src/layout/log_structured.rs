@@ -313,13 +313,10 @@ impl StorageLayout for LogStructuredLayout {
 
     let created = slot_data.read_timestamp_be_at(LOGENT_CREATE_OFFSETOF_CREATED_TS);
     let len: u64 = slot_data.read_u16_be_at(LOGENT_CREATE_OFFSETOF_LEN).into();
-    let contents = String::from_utf8(
-      self
-        .device
-        .read_at(offset + LOGENT_CREATE_OFFSETOF_CONTENTS, len)
-        .await,
-    )
-    .unwrap();
+    let contents = self
+      .device
+      .read_at(offset + LOGENT_CREATE_OFFSETOF_CONTENTS, len)
+      .await;
 
     MessageOnDisk {
       created,
@@ -363,7 +360,7 @@ impl StorageLayout for LogStructuredLayout {
         LOGENT_CREATE_OFFSETOF_LEN,
         u16::try_from(contents.len()).unwrap(),
       );
-      data.write_slice_at(LOGENT_CREATE_OFFSETOF_CONTENTS, contents.as_bytes());
+      data.write_slice_at(LOGENT_CREATE_OFFSETOF_CONTENTS, &contents);
       let bump = self.log_structured.bump_tail(data.len()).await;
       writes.push(WriteRequest::new(bump.acquired_physical_offset, data));
       bumps.push(bump);

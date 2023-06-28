@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize)]
 pub struct OpPushInputMessage {
-  pub contents: String,
+  pub contents: Vec<u8>,
   pub visibility_timeout_secs: i64,
 }
 

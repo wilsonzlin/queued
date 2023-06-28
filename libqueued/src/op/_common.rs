@@ -8,11 +8,8 @@ pub(crate) async fn verify_poll_tag(
   ctx: &Ctx,
   missing_metric: &AtomicU64,
   id: u64,
-  poll_tag_hex: &str,
+  req_poll_tag: &[u8],
 ) -> OpResult<()> {
-  let Ok(req_poll_tag) = hex::decode(poll_tag_hex) else {
-    return Err(OpError::InvalidPollTag);
-  };
   if req_poll_tag.len() != 30 {
     return Err(OpError::InvalidPollTag);
   }

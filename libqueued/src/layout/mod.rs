@@ -17,7 +17,7 @@ pub(crate) struct LoadedData {
 pub(crate) struct MessageOnDisk {
   pub created: DateTime<Utc>,
   pub poll_count: u32,
-  pub contents: String,
+  pub contents: Vec<u8>,
 }
 
 pub(crate) struct MessagePoll {
@@ -29,7 +29,7 @@ pub(crate) struct MessagePoll {
 pub(crate) struct MessageCreation {
   pub id: u64,
   pub visible_time: DateTime<Utc>,
-  pub contents: String,
+  pub contents: Vec<u8>,
 }
 
 #[async_trait]
