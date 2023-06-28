@@ -1,4 +1,4 @@
-use off64::Off64Int;
+use off64::int::Off64ReadInt;
 use seekable_async_file::SeekableAsyncFile;
 use signal_future::SignalFuture;
 use signal_future::SignalFutureController;
@@ -8,7 +8,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use write_journal::AtomicWriteGroup;
 use write_journal::WriteJournal;
 
 pub(crate) struct IdGenerator {
@@ -68,13 +67,9 @@ impl IdGenerator {
       };
       let id = self.next.load(Ordering::Relaxed);
       if id != self.committed.load(Ordering::Relaxed) {
-        self
-          .journal
-          .write(AtomicWriteGroup(vec![(
-            self.device_offset,
-            id.to_be_bytes().to_vec(),
-          )]))
-          .await;
+        let mut txn = self.journal.begin_transaction();
+        txn.write(self.device_offset, id.to_be_bytes());
+        self.journal.commit_transaction(txn).await;
       };
       // TODO Use split_off or drain_range.
       loop {
@@ -85,7 +80,7 @@ impl IdGenerator {
         if *e.key() > id {
           break;
         };
-        e.remove_entry().1.signal();
+        e.remove_entry().1.signal(());
       }
       self.committed.store(id, Ordering::Relaxed);
     }

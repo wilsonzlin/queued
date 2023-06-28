@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::join;
 
+// TODO Tune.
 const DELAYED_SYNC_US: u64 = 100;
 
 #[derive(Parser, Debug)]
@@ -79,6 +80,8 @@ async fn main() {
     } else {
       QueuedLayoutType::LogStructured
     },
+    // TODO Tune.
+    std::time::Duration::from_micros(DELAYED_SYNC_US),
   );
 
   if cli.format {

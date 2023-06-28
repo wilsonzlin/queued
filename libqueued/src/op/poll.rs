@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 
 #[derive(Deserialize)]
 pub struct OpPollInput {
@@ -20,11 +21,11 @@ pub struct OpPollInput {
 
 #[derive(Serialize)]
 pub struct OpPollOutputMessage {
-  pub contents: Vec<u8>,
+  pub contents: TinyBuf,
   pub created: DateTime<Utc>,
   pub id: u64,
   pub poll_count: u32,
-  pub poll_tag: Vec<u8>,
+  pub poll_tag: TinyBuf,
 }
 
 #[derive(Serialize)]
@@ -92,7 +93,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
       created,
       id,
       poll_count: new_poll_count,
-      poll_tag,
+      poll_tag: poll_tag.into(),
     }),
   })
 }

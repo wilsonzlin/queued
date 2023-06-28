@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::Utc;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 
 pub mod fixed_slots;
 pub mod log_structured;
@@ -17,7 +18,7 @@ pub(crate) struct LoadedData {
 pub(crate) struct MessageOnDisk {
   pub created: DateTime<Utc>,
   pub poll_count: u32,
-  pub contents: Vec<u8>,
+  pub contents: TinyBuf,
 }
 
 pub(crate) struct MessagePoll {
@@ -29,7 +30,7 @@ pub(crate) struct MessagePoll {
 pub(crate) struct MessageCreation {
   pub id: u64,
   pub visible_time: DateTime<Utc>,
-  pub contents: Vec<u8>,
+  pub contents: TinyBuf,
 }
 
 #[async_trait]
@@ -43,7 +44,7 @@ pub(crate) trait StorageLayout {
   // It's safe to assume that this method will only ever be called at most once for the entire lifetime of this StorageLayout, so it's safe to mutate internal state and "initialise" it.
   async fn load_data_from_device(&self, metrics: Arc<Metrics>) -> LoadedData;
 
-  async fn read_poll_tag(&self, id: u64) -> Vec<u8>;
+  async fn read_poll_tag(&self, id: u64) -> TinyBuf;
 
   async fn update_visibility_time(&self, id: u64, visible_time: DateTime<Utc>) -> ();
 

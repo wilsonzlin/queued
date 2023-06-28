@@ -34,6 +34,7 @@ use seekable_async_file::SeekableAsyncFile;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
+use std::time::Duration;
 use suspend::SuspendState;
 use throttler::Throttler;
 use tokio::join;
@@ -60,13 +61,19 @@ pub enum QueuedLayoutType {
 }
 
 impl QueuedLoader {
-  pub fn new(device: SeekableAsyncFile, device_size: u64, layout_type: QueuedLayoutType) -> Self {
+  pub fn new(
+    device: SeekableAsyncFile,
+    device_size: u64,
+    layout_type: QueuedLayoutType,
+    journal_commit_delay: Duration,
+  ) -> Self {
     let metrics = Arc::new(Metrics::default());
 
     let journal = Arc::new(WriteJournal::new(
       device.clone(),
       OFFSETOF_JOURNAL,
       JOURNAL_CAPACITY,
+      journal_commit_delay,
     ));
     let id_gen = Arc::new(IdGenerator::new(
       device.clone(),

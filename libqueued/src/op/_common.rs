@@ -22,7 +22,7 @@ pub(crate) async fn verify_poll_tag(
 
   // Note that there may be subtle race conditions here, as we're not holding a lock/in a critical section, but the poll tag is 30 bytes of crypto-strength random data, so there shouldn't be any chance of conflict anyway.
   let slot_poll_tag = ctx.layout.read_poll_tag(id).await;
-  if slot_poll_tag != req_poll_tag {
+  if slot_poll_tag.as_slice() != req_poll_tag {
     missing_metric.fetch_add(1, Ordering::Relaxed);
     return Err(OpError::MessageNotFound);
   };

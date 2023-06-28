@@ -9,10 +9,11 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 
 #[derive(Deserialize)]
 pub struct OpPushInputMessage {
-  pub contents: Vec<u8>,
+  pub contents: TinyBuf,
   pub visibility_timeout_secs: i64,
 }
 

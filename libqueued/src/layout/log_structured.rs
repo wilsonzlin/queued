@@ -16,15 +16,18 @@ use log_structured::GarbageCheck;
 use log_structured::GarbageChecker;
 use log_structured::LogStructured;
 use num_enum::TryFromPrimitive;
+use off64::chrono::Off64ReadChrono;
+use off64::chrono::Off64WriteMutChrono;
+use off64::int::Off64ReadInt;
+use off64::int::Off64WriteMutInt;
 use off64::usz;
-use off64::Off64Chrono;
-use off64::Off64Int;
-use off64::Off64Slice;
+use off64::Off64WriteMut;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::HashMap;
 use std::collections::LinkedList;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 use write_journal::WriteJournal;
 
 #[derive(TryFromPrimitive, Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,7 +270,7 @@ impl StorageLayout for LogStructuredLayout {
     LoadedData { invisible, visible }
   }
 
-  async fn read_poll_tag(&self, id: u64) -> Vec<u8> {
+  async fn read_poll_tag(&self, id: u64) -> TinyBuf {
     let offset = self.message_state.get(&id).unwrap().poll_offset;
     self
       .device
@@ -329,7 +332,7 @@ impl StorageLayout for LogStructuredLayout {
     let mut data = vec![0u8; usz!(LOGENT_POLL_SIZE)];
     data[usz!(LOGENT_OFFSETOF_TYPE)] = LogEntryType::Poll as u8;
     data.write_u64_be_at(LOGENT_POLL_OFFSETOF_ID, id);
-    data.write_slice_at(LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
+    data.write_at(LOGENT_POLL_OFFSETOF_POLL_TAG, &update.poll_tag);
     data.write_timestamp_be_at(LOGENT_POLL_OFFSETOF_VISIBLE_TS, update.visible_time);
     let bump = self.log_structured.bump_tail(data.len()).await;
     self
@@ -360,7 +363,7 @@ impl StorageLayout for LogStructuredLayout {
         LOGENT_CREATE_OFFSETOF_LEN,
         u16::try_from(contents.len()).unwrap(),
       );
-      data.write_slice_at(LOGENT_CREATE_OFFSETOF_CONTENTS, &contents);
+      data.write_at(LOGENT_CREATE_OFFSETOF_CONTENTS, &contents);
       let bump = self.log_structured.bump_tail(data.len()).await;
       writes.push(WriteRequest::new(bump.acquired_physical_offset, data));
       bumps.push(bump);
