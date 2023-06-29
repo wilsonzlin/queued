@@ -3,6 +3,7 @@ members = [
   "example-client",
   "libqueued",
   "queued",
+  "stochastic-stresser",
 ]
 
 [profile.release]

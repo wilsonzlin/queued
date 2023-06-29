@@ -30,6 +30,7 @@ use op::result::OpResult;
 use op::update::op_update;
 use op::update::OpUpdateInput;
 use op::update::OpUpdateOutput;
+use parking_lot::Mutex;
 use seekable_async_file::SeekableAsyncFile;
 use serde::Deserialize;
 use serde::Serialize;
@@ -38,7 +39,6 @@ use std::time::Duration;
 use suspend::SuspendState;
 use throttler::Throttler;
 use tokio::join;
-use tokio::sync::Mutex;
 use write_journal::WriteJournal;
 
 const OFFSETOF_JOURNAL: u64 = 0;
@@ -193,16 +193,16 @@ impl Queued {
     self.ctx.suspension.clone()
   }
 
-  pub async fn get_throttle_state(&self) -> Option<ThrottleState> {
-    let throttler = self.ctx.throttler.lock().await;
+  pub fn get_throttle_state(&self) -> Option<ThrottleState> {
+    let throttler = self.ctx.throttler.lock();
     throttler.as_ref().map(|t| ThrottleState {
       max_polls_per_time_window: t.get_max_reqs_per_time_window(),
       time_window_sec: t.get_time_window_sec(),
     })
   }
 
-  pub async fn set_throttle(&self, t: Option<ThrottleState>) {
-    *self.ctx.throttler.lock().await =
+  pub fn set_throttle(&self, t: Option<ThrottleState>) {
+    *self.ctx.throttler.lock() =
       t.map(|t| Throttler::new(t.max_polls_per_time_window, t.time_window_sec));
   }
 }

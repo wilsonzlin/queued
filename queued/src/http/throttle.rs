@@ -17,7 +17,7 @@ pub async fn endpoint_get_throttle(
   State(ctx): State<Arc<HttpCtx>>,
 ) -> Result<Json<EndpointIO>, (StatusCode, &'static str)> {
   Ok(Json(EndpointIO {
-    throttle: ctx.queued.get_throttle_state().await,
+    throttle: ctx.queued.get_throttle_state(),
   }))
 }
 
@@ -25,8 +25,8 @@ pub async fn endpoint_post_throttle(
   State(ctx): State<Arc<HttpCtx>>,
   Json(req): Json<EndpointIO>,
 ) -> Result<Json<EndpointIO>, (StatusCode, &'static str)> {
-  ctx.queued.set_throttle(req.throttle).await;
+  ctx.queued.set_throttle(req.throttle);
   Ok(Json(EndpointIO {
-    throttle: ctx.queued.get_throttle_state().await,
+    throttle: ctx.queued.get_throttle_state(),
   }))
 }

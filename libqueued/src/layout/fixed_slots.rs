@@ -22,13 +22,14 @@ use off64::int::Off64WriteMutInt;
 use off64::usz;
 use off64::Off64Read;
 use off64::Off64WriteMut;
+use parking_lot::Mutex;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::cmp::min;
 use std::collections::LinkedList;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tinybuf::TinyBuf;
-use tokio::sync::Mutex;
 
 #[derive(Debug, Eq, PartialEq, TryFromPrimitive)]
 #[repr(u8)]
@@ -195,9 +196,9 @@ impl StorageLayout for FixedSlotsLayout {
             SlotState::Available => {
               let visible_time = slot_data.read_timestamp_be_at(SLOT_OFFSETOF_VISIBLE_TS);
               if visible_time <= now {
-                visible_unsorted.lock().await.push((id, visible_time));
+                visible_unsorted.lock().push((id, visible_time));
               } else {
-                invisible.lock().await.insert(id, visible_time);
+                invisible.lock().insert(id, visible_time);
               };
               let None = self.message_state.insert(id, MessageState {
                 slot_index,
@@ -206,25 +207,21 @@ impl StorageLayout for FixedSlotsLayout {
               };
             }
             SlotState::Vacant => {
-              vacant.lock().await.add(slot_index);
+              vacant.lock().add(slot_index);
             }
           };
         }
       })
       .await;
 
-    let mut visible_unsorted = Arc::try_unwrap(visible_unsorted)
-      .unwrap_or_else(|_| unreachable!())
-      .into_inner();
+    let mut visible_unsorted = Arc::into_inner(visible_unsorted).unwrap().into_inner();
     visible_unsorted.sort_unstable_by_key(|(_, visible_ts)| *visible_ts);
-    let mut visible_list = LinkedList::new();
+    let mut visible_list = VecDeque::new();
     for (id, _) in visible_unsorted {
       visible_list.push_back(id);
     }
 
-    let invisible = Arc::try_unwrap(invisible)
-      .unwrap_or_else(|_| unreachable!())
-      .into_inner();
+    let invisible = Arc::into_inner(invisible).unwrap().into_inner();
     let visible = VisibleMessages::new_with_list(visible_list, metrics.clone());
     LoadedData { invisible, visible }
   }
@@ -263,7 +260,7 @@ impl StorageLayout for FixedSlotsLayout {
         SLOT_VACANT_TEMPLATE.clone(),
       )])
       .await;
-    self.vacant.lock().await.add(index);
+    self.vacant.lock().add(index);
   }
 
   async fn read_message(&self, id: u64) -> MessageOnDisk {
@@ -314,7 +311,7 @@ impl StorageLayout for FixedSlotsLayout {
   }
 
   async fn create_messages(&self, creations: Vec<MessageCreation>) {
-    let indices = self.vacant.lock().await.take_up_to_n(creations.len());
+    let indices = self.vacant.lock().take_up_to_n(creations.len());
     if indices.len() != creations.len() {
       panic!("out of disk space");
     };

@@ -26,6 +26,7 @@ use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::HashMap;
 use std::collections::LinkedList;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use tinybuf::TinyBuf;
 use write_journal::WriteJournal;
@@ -261,7 +262,7 @@ impl StorageLayout for LogStructuredLayout {
       };
     }
     visible_unsorted.sort_unstable_by_key(|(_, visible_ts)| *visible_ts);
-    let mut visible_messages = LinkedList::new();
+    let mut visible_messages = VecDeque::new();
     for (id, _) in visible_unsorted {
       visible_messages.push_back(id);
     }

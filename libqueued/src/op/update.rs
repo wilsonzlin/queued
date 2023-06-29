@@ -8,11 +8,12 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 
 #[derive(Deserialize)]
 pub struct OpUpdateInput {
   pub id: u64,
-  pub poll_tag: Vec<u8>,
+  pub poll_tag: TinyBuf,
   pub visibility_timeout_secs: i64,
 }
 
@@ -38,7 +39,7 @@ pub(crate) async fn op_update(ctx: Arc<Ctx>, req: OpUpdateInput) -> OpResult<OpU
 
   let new_visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  if ctx.invisible.lock().await.remove(req.id).is_none() {
+  if ctx.invisible.lock().remove(req.id).is_none() {
     ctx
       .metrics
       .missing_update_counter
@@ -53,7 +54,7 @@ pub(crate) async fn op_update(ctx: Arc<Ctx>, req: OpUpdateInput) -> OpResult<OpU
     .update_visibility_time(req.id, new_visible_time)
     .await;
 
-  ctx.invisible.lock().await.insert(req.id, new_visible_time);
+  ctx.invisible.lock().insert(req.id, new_visible_time);
 
   ctx
     .metrics

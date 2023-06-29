@@ -37,8 +37,4 @@ impl Throttler {
   pub fn get_time_window_sec(&self) -> i64 {
     self.time_base
   }
-
-  pub fn get_count(&self) -> u64 {
-    self.count
-  }
 }

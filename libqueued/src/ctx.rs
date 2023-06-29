@@ -5,8 +5,8 @@ use crate::metrics::Metrics;
 use crate::suspend::SuspendState;
 use crate::throttler::Throttler;
 use crate::visible::VisibleMessages;
+use parking_lot::Mutex;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub(crate) struct Ctx {
   pub(crate) id_gen: Arc<IdGenerator>,

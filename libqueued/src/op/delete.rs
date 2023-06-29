@@ -6,11 +6,12 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tinybuf::TinyBuf;
 
 #[derive(Serialize, Deserialize)]
 pub struct OpDeleteInput {
   pub id: u64,
-  pub poll_tag: Vec<u8>,
+  pub poll_tag: TinyBuf,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,7 +34,7 @@ pub(crate) async fn op_delete(ctx: Arc<Ctx>, req: OpDeleteInput) -> OpResult<OpD
   )
   .await?;
 
-  if ctx.invisible.lock().await.remove(req.id).is_none() {
+  if ctx.invisible.lock().remove(req.id).is_none() {
     ctx
       .metrics
       .missing_delete_counter

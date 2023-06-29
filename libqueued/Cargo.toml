@@ -31,6 +31,7 @@ lazy_static = "1.4"
 log-structured = { version = "0.2.0", default-features = false }
 num_enum = "0.5"
 off64 = "0.6.0"
+parking_lot = "0.12.1"
 rand = "0.8"
 seekable-async-file = { version = "0.11.3", default-features = false }
 serde = { version = "1.0.164", features = ["derive"] }

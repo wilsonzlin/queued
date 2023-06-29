@@ -43,7 +43,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
   };
 
   {
-    let mut throttler = ctx.throttler.lock().await;
+    let mut throttler = ctx.throttler.lock();
     if throttler.is_some() && !throttler.as_mut().unwrap().increment_count() {
       ctx
         .metrics
@@ -55,7 +55,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
 
   let visible_time = Utc::now() + Duration::seconds(req.visibility_timeout_secs);
 
-  let Some(id) = ctx.visible.pop_next().await else {
+  let Some(id) = ctx.visible.pop_next() else {
     ctx.metrics.empty_poll_counter.fetch_add(1, Ordering::Relaxed);
     return Ok(OpPollOutput { message: None });
   };
@@ -80,7 +80,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
     })
     .await;
 
-  ctx.invisible.lock().await.insert(id, visible_time);
+  ctx.invisible.lock().insert(id, visible_time);
 
   ctx
     .metrics
