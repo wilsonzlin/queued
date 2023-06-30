@@ -19,7 +19,8 @@ default = []
 alloc_jemalloc = ["dep:jemallocator"]
 
 [dependencies]
-axum = { version = "0.6", features = ["headers"] }
+axum = { version = "0.6", features = ["headers", "http2"] }
+axum-msgpack = "0.3.0"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 jemallocator = { version = "0.3", optional = true }
@@ -28,3 +29,5 @@ seekable-async-file = "0.11.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"

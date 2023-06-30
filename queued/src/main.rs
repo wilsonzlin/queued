@@ -18,6 +18,7 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::join;
+use tracing::info;
 
 // TODO Tune.
 const DELAYED_SYNC_US: u64 = 100;
@@ -52,6 +53,8 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+  tracing_subscriber::fmt::init();
+
   let cli = Cli::parse();
 
   let device_size = match cli.device_size {
@@ -86,6 +89,7 @@ async fn main() {
 
   if cli.format {
     queued.format().await;
+    info!("formatted device");
     // To avoid accidentally reusing --format command for starting long-running server process, quit immediately so it's not possible to do so.
     return;
   };

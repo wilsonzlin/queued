@@ -24,6 +24,7 @@ use axum::Server;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tracing::info;
 
 pub async fn start_http_server_loop(interface: Ipv4Addr, port: u16, ctx: Arc<HttpCtx>) {
   let app = Router::new()
@@ -45,6 +46,8 @@ pub async fn start_http_server_loop(interface: Ipv4Addr, port: u16, ctx: Arc<Htt
     .with_state(ctx.clone());
 
   let addr = SocketAddr::from((interface, port));
+
+  info!(interface = interface.to_string(), port, "server started");
 
   Server::bind(&addr)
     .serve(app.into_make_service())

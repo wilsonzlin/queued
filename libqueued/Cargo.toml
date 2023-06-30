@@ -28,7 +28,7 @@ futures = "0.3"
 hex = "0.4"
 itertools = "0.10"
 lazy_static = "1.4"
-log-structured = { version = "0.2.0", default-features = false }
+log-structured = { version = "0.2.1", default-features = false }
 num_enum = "0.5"
 off64 = "0.6.0"
 parking_lot = "0.12.1"
