@@ -39,6 +39,7 @@ use std::time::Duration;
 use suspend::SuspendState;
 use throttler::Throttler;
 use tokio::join;
+use tracing::info;
 use write_journal::WriteJournal;
 
 const OFFSETOF_JOURNAL: u64 = 0;
@@ -128,6 +129,12 @@ impl QueuedLoader {
 
     let invisible = Arc::new(Mutex::new(invisible));
     let visible = Arc::new(visible);
+
+    info!(
+      invisible_count = invisible.lock().len(),
+      visible_count = visible.len(),
+      "queued loaded",
+    );
 
     let ctx = Arc::new(Ctx {
       id_gen: self.id_gen,

@@ -23,6 +23,10 @@ impl InvisibleMessages {
     }
   }
 
+  pub fn len(&self) -> usize {
+    self.by_id.len()
+  }
+
   pub fn insert(&mut self, id: u64, ts: DateTime<Utc>) {
     if !self
       .ordered_by_visible_time

@@ -20,6 +20,10 @@ impl VisibleMessages {
     }
   }
 
+  pub fn len(&self) -> usize {
+    self.messages.lock().len()
+  }
+
   pub async fn start_invisible_consumption_background_loop(
     &self,
     invisible: Arc<Mutex<InvisibleMessages>>,
