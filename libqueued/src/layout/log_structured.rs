@@ -25,7 +25,6 @@ use off64::Off64WriteMut;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::collections::HashMap;
-use std::collections::LinkedList;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tinybuf::TinyBuf;
@@ -307,9 +306,11 @@ impl StorageLayout for LogStructuredLayout {
   }
 
   async fn read_message(&self, id: u64) -> MessageOnDisk {
-    let state = self.message_state.get(&id).unwrap();
-    let offset = state.create_offset;
-    let poll_count = state.poll_count;
+    let (offset, poll_count) = {
+      // We cannot hold lock into DashMap across await.
+      let state = self.message_state.get(&id).unwrap();
+      (state.create_offset, state.poll_count)
+    };
     let slot_data = self
       .device
       .read_at(offset, LOGENT_CREATE_OFFSETOF_CONTENTS)

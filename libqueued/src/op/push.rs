@@ -66,7 +66,7 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
       let id = base_id + u64::try_from(i).unwrap();
       let visible_time = now + Duration::seconds(msg.visibility_timeout_secs);
 
-      if visible_time <= now {
+      if visible_time > now {
         to_add_invisible.push((id, visible_time));
       } else {
         to_add_visible.push(id);

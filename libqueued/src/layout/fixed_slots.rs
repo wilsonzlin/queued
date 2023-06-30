@@ -26,7 +26,6 @@ use parking_lot::Mutex;
 use seekable_async_file::SeekableAsyncFile;
 use seekable_async_file::WriteRequest;
 use std::cmp::min;
-use std::collections::LinkedList;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tinybuf::TinyBuf;

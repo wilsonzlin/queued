@@ -119,7 +119,9 @@ async fn main() {
   );
 
   queued.format().await;
+  info!("queued formatted");
   let queued = queued.load().await;
+  info!("queued loaded");
 
   spawn({
     let device = device.clone();
@@ -160,7 +162,7 @@ async fn main() {
     let task_progress = progress.clone();
     async move {
       while !complete.load(Ordering::Relaxed) {
-        sleep(Duration::from_secs(10)).await;
+        sleep(Duration::from_secs(3)).await;
         info!(
           push = task_progress.push.load(Ordering::Relaxed),
           update = task_progress.update.load(Ordering::Relaxed),

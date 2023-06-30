@@ -2,7 +2,6 @@ use crate::invisible::InvisibleMessages;
 use crate::metrics::Metrics;
 use chrono::Utc;
 use parking_lot::Mutex;
-use std::collections::LinkedList;
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -41,11 +40,8 @@ impl VisibleMessages {
     }
   }
 
-  pub fn push_all(&self, ids: Vec<u64>) {
-    let mut messages = self.messages.lock();
-    for id in ids {
-      messages.push_back(id);
-    }
+  pub fn push_all(&self, ids: impl IntoIterator<Item = u64>) {
+    self.messages.lock().extend(ids);
   }
 
   pub fn pop_next(&self) -> Option<u64> {
