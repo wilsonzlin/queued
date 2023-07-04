@@ -1,0 +1,19 @@
+[package]
+name = "queued-benchmarker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bytesize = { version = "1.2.0", features = ["serde"] }
+futures = "0.3.28"
+libqueued = { version = "0.7.2", path = "../libqueued" }
+off64 = "0.6.0"
+parking_lot = "0.12.1"
+roaring = "0.10.1"
+seekable-async-file = "0.11.3"
+serde = { version = "1.0.166", features = ["derive"] }
+serde_yaml = "0.9.22"
+tokio = { version = "1.29.1", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"

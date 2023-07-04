@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "benchmarker",
   "example-client",
   "libqueued",
   "queued",
