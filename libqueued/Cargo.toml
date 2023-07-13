@@ -15,6 +15,7 @@ maintenance = { status = "actively-developed" }
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
+dashmap = "5.5.0"
 futures = "0.3"
 itertools = "0.10"
 num-derive = "0.4.0"

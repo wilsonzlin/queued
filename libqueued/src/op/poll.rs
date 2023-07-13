@@ -5,17 +5,18 @@ use crate::db::rocksdb_key;
 use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
+use dashmap::DashMap;
 use futures::stream::iter;
 use futures::StreamExt;
 use itertools::Itertools;
 use off64::int::create_i40_le;
 use off64::int::create_u32_le;
-use parking_lot::Mutex;
 use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
 pub struct OpPollInput {
@@ -59,68 +60,62 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
 
   let msgs = ctx.messages.lock().remove_earliest_n(req.count);
 
-  let b = Arc::new(Mutex::new(WriteBatchWithTransaction::default()));
-  let out = Arc::new(Mutex::new(
-    msgs
-      .iter()
-      .map(|&(id, _)| OpPollOutputMessage {
-        id,
-        ..Default::default()
-      })
-      .collect_vec(),
-  ));
-  iter(msgs.into_iter().enumerate())
-    .for_each_concurrent(None, |(i, (id, old_poll_tag))| {
-      let b = b.clone();
+  let mut b = WriteBatchWithTransaction::default();
+  let msg_contents = Arc::new(DashMap::new());
+  for &(id, old_poll_tag) in msgs.iter() {
+    b.put(
+      rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id),
+      create_u32_le(old_poll_tag + 1),
+    );
+    b.put(
+      rocksdb_key(RocksDbKeyPrefix::MessageVisibleTimestampSec, id),
+      create_i40_le(new_visible_time),
+    );
+  }
+  let db = ctx.db.clone();
+  spawn_blocking(move || db.write_opt(b, &rocksdb_write_opts()).unwrap())
+    .await
+    .unwrap();
+
+  iter(msgs.iter())
+    .for_each_concurrent(None, |&(id, _)| {
       let db = ctx.db.clone();
-      let out = out.clone();
+      let msg_datas = msg_contents.clone();
       async move {
-        let data = db
-          .get(rocksdb_key(RocksDbKeyPrefix::MessageData, id))
-          .unwrap()
-          .unwrap();
-        let new_poll_tag = old_poll_tag + 1;
-        {
-          let mut b = b.lock();
-          b.put(
-            rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id),
-            create_u32_le(new_poll_tag),
-          );
-          b.put(
-            rocksdb_key(RocksDbKeyPrefix::MessageVisibleTimestampSec, id),
-            create_i40_le(new_visible_time),
-          );
-        };
-        {
-          let mut o = &mut out.lock()[i];
-          o.contents = data;
-          o.poll_tag = new_poll_tag;
-        };
+        spawn_blocking(move || {
+          let data = db
+            .get(rocksdb_key(RocksDbKeyPrefix::MessageData, id))
+            .unwrap()
+            .unwrap();
+          msg_datas.insert(id, data);
+        })
+        .await
+        .unwrap();
       }
     })
     .await;
-  ctx
-    .db
-    .write_opt(
-      Arc::into_inner(b).unwrap().into_inner(),
-      &rocksdb_write_opts(),
-    )
-    .unwrap();
   ctx.batch_sync.submit_and_wait().await;
-
-  let out = Arc::into_inner(out).unwrap().into_inner();
 
   {
     let mut messages = ctx.messages.lock();
-    for m in out.iter() {
-      messages.insert(m.id, new_visible_time, m.poll_tag);
+    for &(id, old_poll_tag) in msgs.iter() {
+      messages.insert(id, new_visible_time, old_poll_tag + 1);
     }
   };
 
   ctx
     .metrics
     .successful_poll_counter
-    .fetch_add(out.len() as u64, Ordering::Relaxed);
+    .fetch_add(msgs.len() as u64, Ordering::Relaxed);
 
-  Ok(OpPollOutput { messages: out })
+  Ok(OpPollOutput {
+    messages: msgs
+      .into_iter()
+      .map(|(id, old_poll_tag)| OpPollOutputMessage {
+        contents: msg_contents.remove(&id).unwrap().1,
+        id,
+        poll_tag: old_poll_tag + 1,
+      })
+      .collect_vec(),
+  })
 }

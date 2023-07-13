@@ -42,6 +42,7 @@ fn rocksdb_opts() -> rocksdb::Options {
   opt.set_write_buffer_size(1024 * 1024 * 1024 * 1);
   // By default, RocksDB does not fsync WAL after fwrite, so we can lose data even when Put()/Write() returns with success, which is not OK for us. However, requiring fsync() after every Put()/Write() kills performance; therefore, we instead take over responsibility of both fwrite() and fsync() for the WAL, and do so in the background at intervals.
   opt.set_manual_wal_flush(true);
+  opt.set_compression_type(rocksdb::DBCompressionType::None);
 
   // https://github.com/facebook/rocksdb/wiki/Block-Cache.
   let block_cache = Cache::new_lru_cache(1024 * 1024 * 1024 * 1);
