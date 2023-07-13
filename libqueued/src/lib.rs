@@ -1,3 +1,4 @@
+pub mod batch_sync;
 pub mod ctx;
 pub mod db;
 pub mod invisible;
@@ -6,6 +7,7 @@ pub mod op;
 pub mod suspend;
 pub mod throttler;
 
+use crate::batch_sync::BatchSync;
 use ctx::Ctx;
 use db::rocksdb_load;
 use db::rocksdb_open;
@@ -58,6 +60,7 @@ impl Queued {
     );
 
     let ctx = Ctx {
+      batch_sync: BatchSync::start(db.clone()),
       db,
       messages: Mutex::new(data.messages),
       metrics,

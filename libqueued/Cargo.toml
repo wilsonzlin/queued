@@ -24,5 +24,6 @@ off64 = "0.6.0"
 parking_lot = "0.12.1"
 rocksdb = "0.21.0"
 serde = { version = "1.0.164", features = ["derive"] }
+signal-future = "0.1.1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1.37"

@@ -2,6 +2,7 @@ use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
+use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
 use off64::int::create_i40_le;
@@ -59,10 +60,11 @@ pub(crate) async fn op_update(ctx: Arc<Ctx>, req: OpUpdateInput) -> OpResult<OpU
       rocksdb_key(RocksDbKeyPrefix::MessageVisibleTimestampSec, req.id),
       create_i40_le(new_visible_time),
     );
-    db.write(b).unwrap();
+    db.write_opt(b, &rocksdb_write_opts()).unwrap();
   })
   .await
   .unwrap();
+  ctx.batch_sync.submit_and_wait().await;
 
   ctx
     .messages

@@ -7,6 +7,7 @@ use rocksdb::BlockBasedOptions;
 use rocksdb::Cache;
 use rocksdb::Direction;
 use rocksdb::IteratorMode;
+use rocksdb::WriteOptions;
 use rocksdb::DB;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, FromPrimitive)]
 #[repr(u8)]
 pub(crate) enum RocksDbKeyPrefix {
-  MessagePollTag = 1,
+  MessagePollTag = 1, // Only exists for messages that have been polled at least once.
   MessageVisibleTimestampSec = 2,
   MessageData = 3,
 }
@@ -39,6 +40,8 @@ fn rocksdb_opts() -> rocksdb::Options {
   opt.set_bytes_per_sync(1024 * 1024 * 4);
   // https://github.com/facebook/rocksdb/wiki/BlobDB#performance-tuning
   opt.set_write_buffer_size(1024 * 1024 * 1024 * 1);
+  // By default, RocksDB does not fsync WAL after fwrite, so we can lose data even when Put()/Write() returns with success, which is not OK for us. However, requiring fsync() after every Put()/Write() kills performance; therefore, we instead take over responsibility of both fwrite() and fsync() for the WAL, and do so in the background at intervals.
+  opt.set_manual_wal_flush(true);
 
   // https://github.com/facebook/rocksdb/wiki/Block-Cache.
   let block_cache = Cache::new_lru_cache(1024 * 1024 * 1024 * 1);
@@ -82,9 +85,14 @@ pub(crate) fn rocksdb_load(db: &DB, metrics: Arc<Metrics>) -> LoadedData {
     let poll_tag = db
       .get(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id))
       .unwrap()
-      .unwrap()
-      .read_u32_le_at(0);
+      .map(|raw| raw.read_u32_le_at(0))
+      .unwrap_or(0);
     messages.insert(id, visible_time, poll_tag);
   }
   LoadedData { messages, next_id }
+}
+
+// This exists in case we need to override options for all writes in the future.
+pub(crate) fn rocksdb_write_opts() -> WriteOptions {
+  WriteOptions::default()
 }

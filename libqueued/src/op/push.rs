@@ -2,6 +2,7 @@ use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
+use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
 use itertools::Itertools;
@@ -55,7 +56,11 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
     to_add.push((id, visible_time));
   }
   let db = ctx.db.clone();
-  spawn_blocking(move || db.write(b).unwrap()).await.unwrap();
+  spawn_blocking(move || db.write_opt(b, &rocksdb_write_opts()).unwrap())
+    .await
+    .unwrap();
+  ctx.batch_sync.submit_and_wait().await;
+
   {
     let mut messages = ctx.messages.lock();
     for (id, vt) in to_add {

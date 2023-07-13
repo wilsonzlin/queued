@@ -1,3 +1,4 @@
+use crate::batch_sync::BatchSync;
 use crate::invisible::Messages;
 use crate::metrics::Metrics;
 use crate::suspend::SuspendState;
@@ -7,6 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 pub(crate) struct Ctx {
+  pub batch_sync: BatchSync,
   pub db: Arc<rocksdb::DB>,
   pub messages: Mutex<Messages>,
   pub metrics: Arc<Metrics>,

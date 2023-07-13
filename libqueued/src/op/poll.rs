@@ -2,6 +2,7 @@ use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
+use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
 use futures::stream::iter;
@@ -100,8 +101,13 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
     .await;
   ctx
     .db
-    .write(Arc::into_inner(b).unwrap().into_inner())
+    .write_opt(
+      Arc::into_inner(b).unwrap().into_inner(),
+      &rocksdb_write_opts(),
+    )
     .unwrap();
+  ctx.batch_sync.submit_and_wait().await;
+
   let out = Arc::into_inner(out).unwrap().into_inner();
 
   {
