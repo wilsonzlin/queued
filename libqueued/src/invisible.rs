@@ -1,22 +1,25 @@
 use crate::metrics::Metrics;
-use chrono::DateTime;
 use chrono::Utc;
+use itertools::Itertools;
+use std::collections::hash_map::Entry;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-pub(crate) struct InvisibleMessages {
+type TimestampSec = i64;
+
+pub(crate) struct Messages {
   metrics: Arc<Metrics>,
   // We use a map instead of a heap as we want to be able to remove/mutate individual specific entries.
-  ordered_by_visible_time: BTreeMap<DateTime<Utc>, HashSet<u64>>,
-  by_id: HashMap<u64, DateTime<Utc>>,
+  ordered_by_visible_time: BTreeMap<TimestampSec, HashSet<u64>>,
+  by_id: HashMap<u64, (TimestampSec, u32)>,
 }
 
-impl InvisibleMessages {
+impl Messages {
   pub fn new(metrics: Arc<Metrics>) -> Self {
-    InvisibleMessages {
+    Messages {
       metrics,
       by_id: HashMap::new(),
       ordered_by_visible_time: BTreeMap::new(),
@@ -27,7 +30,7 @@ impl InvisibleMessages {
     self.by_id.len()
   }
 
-  pub fn insert(&mut self, id: u64, ts: DateTime<Utc>) {
+  pub fn insert(&mut self, id: u64, ts: TimestampSec, poll_tag: u32) {
     if !self
       .ordered_by_visible_time
       .entry(ts)
@@ -36,18 +39,21 @@ impl InvisibleMessages {
     {
       panic!("ID already exists");
     }
-    let None = self.by_id.insert(id, ts) else {
+    let None = self.by_id.insert(id, (ts, poll_tag)) else {
       panic!("ID already exists");
     };
     self.metrics.invisible_gauge.fetch_add(1, Ordering::Relaxed);
   }
 
-  pub fn has(&self, id: u64) -> bool {
-    self.by_id.contains_key(&id)
-  }
-
-  pub fn remove(&mut self, id: u64) -> Option<()> {
-    let ts = self.by_id.remove(&id)?;
+  fn remove_if<F: Fn((TimestampSec, u32)) -> bool>(
+    &mut self,
+    id: u64,
+    pred: F,
+  ) -> Option<(TimestampSec, u32)> {
+    let (ts, poll_tag) = match self.by_id.entry(id) {
+      Entry::Occupied(e) if pred(*e.get()) => e.remove(),
+      _ => return None,
+    };
     let set = self.ordered_by_visible_time.get_mut(&ts).unwrap();
     if !set.remove(&id) {
       panic!("ID does not exist");
@@ -56,39 +62,46 @@ impl InvisibleMessages {
       self.ordered_by_visible_time.remove(&ts).unwrap();
     }
     self.metrics.invisible_gauge.fetch_sub(1, Ordering::Relaxed);
-    Some(())
+    Some((ts, poll_tag))
   }
 
-  pub fn update_timestamp(&mut self, id: u64, new_ts: DateTime<Utc>) {
-    let old_ts = self.by_id.insert(id, new_ts).unwrap();
-    let old_ts_set = self.ordered_by_visible_time.get_mut(&old_ts).unwrap();
-    if !old_ts_set.remove(&id) {
-      panic!("ID does not exist");
-    };
-    if old_ts_set.is_empty() {
-      self.ordered_by_visible_time.remove(&old_ts).unwrap();
-    };
-    if !self
-      .ordered_by_visible_time
-      .entry(new_ts)
-      .or_default()
-      .insert(id)
-    {
-      panic!("ID already exists");
-    };
+  pub fn remove_if_poll_tag_matches(&mut self, id: u64, expected_poll_tag: u32) -> bool {
+    self
+      .remove_if(id, |(_ts, poll_tag)| poll_tag == expected_poll_tag)
+      .is_some()
   }
 
-  pub fn get_earliest(&self) -> Option<(&DateTime<Utc>, &HashSet<u64>)> {
-    self.ordered_by_visible_time.first_key_value()
-  }
-
-  pub fn remove_earliest_up_to(&mut self, up_to_ts: &DateTime<Utc>) -> Option<u64> {
-    let indices = self
-      .ordered_by_visible_time
-      .first_entry()
-      .filter(|e| e.key() <= up_to_ts)?;
-    let id = *indices.get().iter().next().unwrap();
-    self.remove(id).unwrap();
-    Some(id)
+  pub fn remove_earliest_n(&mut self, n: usize) -> Vec<(u64, u32)> {
+    let now = Utc::now().timestamp();
+    let mut removed_ids = Vec::new();
+    while removed_ids.len() < n {
+      let Some(mut ids) = self.ordered_by_visible_time.first_entry().filter(|e| *e.key() <= now) else {
+        break;
+      };
+      for id in ids
+        .get()
+        .iter()
+        .cloned()
+        .take(n - removed_ids.len())
+        .collect_vec()
+      {
+        removed_ids.push(id);
+        assert!(ids.get_mut().remove(&id));
+        if removed_ids.len() == n {
+          break;
+        }
+      }
+      if ids.get().is_empty() {
+        ids.remove();
+      }
+    }
+    self
+      .metrics
+      .invisible_gauge
+      .fetch_sub(removed_ids.len() as u64, Ordering::Relaxed);
+    removed_ids
+      .into_iter()
+      .map(|id| (id, self.by_id.remove(&id).unwrap().1))
+      .collect_vec()
   }
 }

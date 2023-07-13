@@ -1,17 +1,19 @@
-use super::_common::verify_poll_tag;
 use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
+use crate::db::rocksdb_key;
+use crate::db::RocksDbKeyPrefix;
+use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tinybuf::TinyBuf;
+use tokio::task::spawn_blocking;
 
 #[derive(Serialize, Deserialize)]
 pub struct OpDeleteInput {
   pub id: u64,
-  pub poll_tag: TinyBuf,
+  pub poll_tag: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -26,24 +28,31 @@ pub(crate) async fn op_delete(ctx: Arc<Ctx>, req: OpDeleteInput) -> OpResult<OpD
     return Err(OpError::Suspended);
   };
 
-  verify_poll_tag(
-    &ctx,
-    &ctx.metrics.missing_delete_counter,
-    req.id,
-    &req.poll_tag,
-  )
-  .await?;
-
-  if ctx.invisible.lock().remove(req.id).is_none() {
+  if !ctx
+    .messages
+    .lock()
+    .remove_if_poll_tag_matches(req.id, req.poll_tag)
+  {
     ctx
       .metrics
       .missing_delete_counter
       .fetch_add(1, Ordering::Relaxed);
-    // Someone else beat us to it.
     return Err(OpError::MessageNotFound);
   };
 
-  ctx.layout.delete_message(req.id).await;
+  let db = ctx.db.clone();
+  spawn_blocking(move || {
+    let mut b = WriteBatchWithTransaction::default();
+    b.delete(rocksdb_key(RocksDbKeyPrefix::MessageData, req.id));
+    b.delete(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, req.id));
+    b.delete(rocksdb_key(
+      RocksDbKeyPrefix::MessageVisibleTimestampSec,
+      req.id,
+    ));
+    db.write(b).unwrap();
+  })
+  .await
+  .unwrap();
 
   ctx
     .metrics

@@ -1,19 +1,16 @@
-use crate::id_gen::IdGenerator;
-use crate::invisible::InvisibleMessages;
-use crate::layout::StorageLayout;
+use crate::invisible::Messages;
 use crate::metrics::Metrics;
 use crate::suspend::SuspendState;
 use crate::throttler::Throttler;
-use crate::visible::VisibleMessages;
 use parking_lot::Mutex;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 pub(crate) struct Ctx {
-  pub(crate) id_gen: Arc<IdGenerator>,
-  pub(crate) invisible: Arc<Mutex<InvisibleMessages>>,
-  pub(crate) layout: Arc<dyn StorageLayout + Send + Sync>,
-  pub(crate) metrics: Arc<Metrics>,
-  pub(crate) suspension: Arc<SuspendState>,
-  pub(crate) throttler: Mutex<Option<Throttler>>,
-  pub(crate) visible: Arc<VisibleMessages>,
+  pub db: Arc<rocksdb::DB>,
+  pub messages: Mutex<Messages>,
+  pub metrics: Arc<Metrics>,
+  pub next_id: AtomicU64,
+  pub suspension: Arc<SuspendState>,
+  pub throttler: Mutex<Option<Throttler>>,
 }

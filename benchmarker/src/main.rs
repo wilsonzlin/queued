@@ -4,35 +4,27 @@ use futures::StreamExt;
 use libqueued::op::poll::OpPollInput;
 use libqueued::op::push::OpPushInput;
 use libqueued::op::push::OpPushInputMessage;
-use libqueued::QueuedLayoutType;
-use libqueued::QueuedLoader;
+use libqueued::Queued;
 use off64::int::Off64ReadInt;
 use off64::int::Off64WriteMutInt;
 use off64::u64;
 use off64::usz;
 use parking_lot::Mutex;
 use roaring::RoaringTreemap;
-use seekable_async_file::SeekableAsyncFile;
-use seekable_async_file::SeekableAsyncFileMetrics;
 use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::spawn;
+use tokio::fs::create_dir;
+use tokio::fs::remove_dir_all;
 use tokio::time::Instant;
 use tracing::info;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
-  device_path: PathBuf,
-
-  device_size: u64,
-
-  #[serde(default)]
-  fixed_slots_layout: bool,
+  data_dir: PathBuf,
 
   /// Messages to create.
   messages: usize,
@@ -43,9 +35,9 @@ struct Config {
   /// Concurrency level. Defaults to 64.
   concurrency: Option<usize>,
 
-  /// Skips formatting the device.
+  /// Skips clearing the data directory.
   #[serde(default)]
-  skip_device_format: bool,
+  skip_data_dir_reset: bool,
 
   /// Skips pushing messages. Useful for benchmarking across invocations, where a previous invocation has already created all messages but didn't poll or delete them.
   #[serde(default)]
@@ -69,43 +61,13 @@ async fn main() {
   let message_count = cli.messages;
   let message_size = usz!(cli.message_size.as_u64());
 
-  let device = SeekableAsyncFile::open(
-    &cli.device_path,
-    cli.device_size,
-    Arc::new(SeekableAsyncFileMetrics::default()),
-    Duration::from_micros(10),
-    0,
-  )
-  .await;
-
-  let queued = QueuedLoader::new(
-    device.clone(),
-    cli.device_size,
-    if cli.fixed_slots_layout {
-      QueuedLayoutType::FixedSlots
-    } else {
-      QueuedLayoutType::LogStructured
-    },
-    Duration::from_micros(10),
-  );
-
-  if !cli.skip_device_format {
-    queued.format().await;
-    info!("queued formatted");
+  if !cli.skip_data_dir_reset {
+    remove_dir_all(&cli.data_dir).await.unwrap();
+    create_dir(&cli.data_dir).await.unwrap();
+    info!("cleared data dir");
   };
-  let queued = queued.load().await;
+  let queued = Queued::load_and_start(&cli.data_dir).await;
   info!("queued loaded");
-
-  spawn({
-    let device = device.clone();
-    let queued = queued.clone();
-    async move {
-      tokio::join! {
-        queued.start(),
-        device.start_delayed_data_sync_background_loop(),
-      };
-    }
-  });
 
   if !cli.skip_push {
     let now = Instant::now();
@@ -146,14 +108,14 @@ async fn main() {
         let queued = queued.clone();
         let unseen = unseen.clone();
         async move {
-          let msg = queued
+          let msg = &queued
             .poll(OpPollInput {
+              count: 1,
               visibility_timeout_secs: 3600,
             })
             .await
             .unwrap()
-            .message
-            .unwrap()
+            .messages[0]
             .contents;
           assert_eq!(msg.len(), message_size);
           let id = msg.read_u64_le_at(0);

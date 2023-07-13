@@ -6,17 +6,15 @@ use libqueued::op::poll::OpPollInput;
 use libqueued::op::push::OpPushInput;
 use libqueued::op::push::OpPushInputMessage;
 use libqueued::op::update::OpUpdateInput;
-use libqueued::QueuedLayoutType;
-use libqueued::QueuedLoader;
+use libqueued::Queued;
 use off64::usz;
 use rand::thread_rng;
 use rand::Rng;
 use rand::RngCore;
-use seekable_async_file::SeekableAsyncFile;
-use seekable_async_file::SeekableAsyncFileMetrics;
 use serde::Deserialize;
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
@@ -25,19 +23,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use stochastic_queue::mpmc_sync::stochastic_channel;
 use stochastic_queue::mpmc_sync::StochasticMpmcRecvError;
-use tinybuf::TinyBuf;
+use tokio::fs::create_dir;
+use tokio::fs::remove_dir_all;
 use tokio::spawn;
 use tokio::time::sleep;
 use tracing::info;
 
 #[derive(Deserialize)]
 struct Config {
-  device_path: PathBuf,
-
-  device_size: u64,
-
-  #[serde(default)]
-  fixed_slots_layout: bool,
+  data_dir: PathBuf,
 
   /// Messages to create.
   messages: u64,
@@ -60,8 +54,8 @@ struct Pool {
 enum Task {
   Push { data_len: u64, data_offset: u64 },
   Poll {},
-  Update { id: u64, poll_tag: TinyBuf },
-  Delete { id: u64, poll_tag: TinyBuf },
+  Update { id: u64, poll_tag: u32 },
+  Delete { id: u64, poll_tag: u32 },
 }
 
 #[derive(Default)]
@@ -98,41 +92,16 @@ async fn main() {
   )
   .expect("parse config file");
 
-  let device = SeekableAsyncFile::open(
-    &cli.device_path,
-    cli.device_size,
-    Arc::new(SeekableAsyncFileMetrics::default()),
-    Duration::from_micros(10),
-    0,
-  )
-  .await;
+  match remove_dir_all(&cli.data_dir).await {
+    Ok(()) => {}
+    Err(err) if err.kind() == ErrorKind::NotFound => {}
+    Err(err) => panic!("{}", err),
+  };
+  create_dir(&cli.data_dir).await.unwrap();
+  info!("cleared data dir");
 
-  let queued = QueuedLoader::new(
-    device.clone(),
-    cli.device_size,
-    if cli.fixed_slots_layout {
-      QueuedLayoutType::FixedSlots
-    } else {
-      QueuedLayoutType::LogStructured
-    },
-    Duration::from_micros(10),
-  );
-
-  queued.format().await;
-  info!("queued formatted");
-  let queued = queued.load().await;
+  let queued = Queued::load_and_start(&cli.data_dir).await;
   info!("queued loaded");
-
-  spawn({
-    let device = device.clone();
-    let queued = queued.clone();
-    async move {
-      tokio::join! {
-        queued.start(),
-        device.start_delayed_data_sync_background_loop(),
-      };
-    }
-  });
 
   let pool_size = cli
     .pool_size
@@ -202,19 +171,17 @@ async fn main() {
               data_len,
               data_offset,
             } => {
-              let contents = pool.get((data_offset, data_len));
+              let contents = pool.get((data_offset, data_len)).to_vec();
               let res = queued
                 .push(OpPushInput {
                   messages: vec![OpPushInputMessage {
-                    contents: TinyBuf::from_slice(contents),
+                    contents,
                     visibility_timeout_secs: 0,
                   }],
                 })
                 .await
                 .unwrap();
-              assert!(msgs
-                .insert(res.results[0].unwrap(), (data_offset, data_len))
-                .is_none());
+              assert!(msgs.insert(res.ids[0], (data_offset, data_len)).is_none());
               tasks_sender.send(Task::Poll {}).unwrap();
               progress.push.fetch_add(1, Ordering::Relaxed);
             }
@@ -222,11 +189,12 @@ async fn main() {
               let visibility_timeout_secs = thread_rng().gen_range(1800..3600);
               let res = queued
                 .poll(OpPollInput {
+                  count: 1,
                   visibility_timeout_secs,
                 })
                 .await
                 .unwrap();
-              let msg = res.message.unwrap();
+              let msg = &res.messages[0];
               assert_eq!(
                 pool.get(msgs.remove(&msg.id).unwrap().1),
                 msg.contents.as_slice(),
@@ -241,7 +209,7 @@ async fn main() {
             }
             Task::Update { id, poll_tag } => {
               let visibility_timeout_secs = thread_rng().gen_range(1800..3600);
-              queued
+              let res = queued
                 .update(OpUpdateInput {
                   id,
                   poll_tag: poll_tag.clone(),
@@ -249,7 +217,12 @@ async fn main() {
                 })
                 .await
                 .unwrap();
-              tasks_sender.send(Task::Delete { id, poll_tag }).unwrap();
+              tasks_sender
+                .send(Task::Delete {
+                  id,
+                  poll_tag: res.new_poll_tag,
+                })
+                .unwrap();
               progress.update.fetch_add(1, Ordering::Relaxed);
             }
             Task::Delete { id, poll_tag } => {

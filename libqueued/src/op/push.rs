@@ -1,21 +1,23 @@
 use super::result::OpError;
 use super::result::OpResult;
 use crate::ctx::Ctx;
-use crate::layout::MessageCreation;
-use chrono::Duration;
+use crate::db::rocksdb_key;
+use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
 use itertools::Itertools;
-use off64::usz;
+use off64::int::create_i40_le;
+use off64::int::create_u64_le;
+use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tinybuf::TinyBuf;
+use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
 pub struct OpPushInputMessage {
-  pub contents: TinyBuf,
-  pub visibility_timeout_secs: i64,
+  pub contents: Vec<u8>,
+  pub visibility_timeout_secs: u32,
 }
 
 #[derive(Deserialize)]
@@ -23,15 +25,9 @@ pub struct OpPushInput {
   pub messages: Vec<OpPushInputMessage>,
 }
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum OpPushOutputErrorType {
-  ContentsTooLarge,
-  InvalidVisibilityTimeout,
-}
-
 #[derive(Serialize)]
 pub struct OpPushOutput {
-  pub results: Vec<Result<u64, OpPushOutputErrorType>>,
+  pub ids: Vec<u64>,
 }
 
 pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushOutput> {
@@ -43,56 +39,36 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
     return Err(OpError::Suspended);
   };
 
-  let now = Utc::now();
-
-  let n: u64 = req.messages.len().try_into().unwrap();
-  let base_id = ctx.id_gen.generate(n).await;
-  let mut to_add_invisible = Vec::new();
-  let mut to_add_visible = Vec::new();
-  let mut creations = Vec::new();
-  let results = req
-    .messages
-    .into_iter()
-    .enumerate()
-    .map(|(i, msg)| {
-      if msg.contents.len() > usz!(ctx.layout.max_contents_len()) {
-        return Err(OpPushOutputErrorType::ContentsTooLarge);
-      };
-
-      if msg.visibility_timeout_secs < 0 {
-        return Err(OpPushOutputErrorType::InvalidVisibilityTimeout);
-      };
-
-      let id = base_id + u64::try_from(i).unwrap();
-      let visible_time = now + Duration::seconds(msg.visibility_timeout_secs);
-
-      if visible_time > now {
-        to_add_invisible.push((id, visible_time));
-      } else {
-        to_add_visible.push(id);
-      };
-      creations.push(MessageCreation {
-        id,
-        contents: msg.contents,
-        visible_time,
-      });
-      Ok(id)
-    })
-    .collect_vec();
-
-  ctx.layout.create_messages(creations).await;
-
+  let n = req.messages.len() as u64;
+  let base_id = ctx.next_id.fetch_add(n, Ordering::Relaxed);
+  let mut to_add = Vec::new();
+  let mut b = WriteBatchWithTransaction::default();
+  b.put("next_id", create_u64_le(base_id + n));
+  for (i, msg) in req.messages.into_iter().enumerate() {
+    let id = base_id + i as u64;
+    let visible_time = Utc::now().timestamp() + msg.visibility_timeout_secs as i64;
+    b.put(rocksdb_key(RocksDbKeyPrefix::MessageData, id), msg.contents);
+    b.put(
+      rocksdb_key(RocksDbKeyPrefix::MessageVisibleTimestampSec, id),
+      create_i40_le(visible_time),
+    );
+    to_add.push((id, visible_time));
+  }
+  let db = ctx.db.clone();
+  spawn_blocking(move || db.write(b).unwrap()).await.unwrap();
   {
-    let mut invisible = ctx.invisible.lock();
-    for (id, visible_time) in to_add_invisible {
-      invisible.insert(id, visible_time);
+    let mut messages = ctx.messages.lock();
+    for (id, vt) in to_add {
+      messages.insert(id, vt, 0);
     }
-  };
-  ctx.visible.push_all(to_add_visible);
+  }
 
   ctx
     .metrics
     .successful_push_counter
-    .fetch_add(1, Ordering::Relaxed);
-  Ok(OpPushOutput { results })
+    .fetch_add(n, Ordering::Relaxed);
+
+  Ok(OpPushOutput {
+    ids: (0..n).map(|i| base_id + i).collect_vec(),
+  })
 }
