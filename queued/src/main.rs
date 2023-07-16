@@ -38,40 +38,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::remove_file;
 use tokio::fs::set_permissions;
-use tokio::join;
 use tokio::net::UnixListener;
 use tokio::spawn;
 use tokio::time::sleep;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
-
-async fn sample_counter(
-  statsd: &StatsdClient,
-  name: &'static str,
-  f: impl Fn() -> u64,
-  interval: Duration,
-) {
-  let mut last_value = f();
-  loop {
-    sleep(interval).await;
-    let value = f();
-    let diff = i64::try_from(value).unwrap() - i64::try_from(last_value).unwrap();
-    statsd.count(name, diff).unwrap();
-    last_value = value;
-  }
-}
-
-async fn sample_gauge(
-  statsd: &StatsdClient,
-  name: &'static str,
-  f: impl Fn() -> u64,
-  interval: Duration,
-) {
-  loop {
-    sleep(interval).await;
-    statsd.gauge(name, f()).unwrap();
-  }
-}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -117,32 +88,42 @@ async fn main() {
     let sink = UdpMetricSink::from(addr, socket).unwrap();
     let sink = QueuingMetricSink::from(sink);
     let s = StatsdClient::from_sink(&cli.statsd_prefix, sink);
+    info!(
+      server = addr.to_string(),
+      prefix = cli.statsd_prefix,
+      "sending metrics to StatsD server"
+    );
 
     #[rustfmt::skip]
     spawn({
       let ctx = ctx.clone();
-      let i = Duration::from_millis(1000);
       async move {
+        let mut p = ctx.build_server_metrics();
         loop {
+          sleep(Duration::from_millis(1000)).await;
           let m = ctx.build_server_metrics();
-          join! {
-            sample_counter(&s, "empty_poll", || m.empty_poll_counter, i),
-            sample_counter(&s, "message", || m.message_counter, i),
-            sample_counter(&s, "missing_delete", || m.missing_delete_counter, i),
-            sample_counter(&s, "missing_update", || m.missing_update_counter, i),
-            sample_counter(&s, "successful_delete", || m.successful_delete_counter, i),
-            sample_counter(&s, "successful_poll", || m.successful_poll_counter, i),
-            sample_counter(&s, "successful_push", || m.successful_push_counter, i),
-            sample_counter(&s, "successful_update", || m.successful_update_counter, i),
-            sample_counter(&s, "suspended_delete", || m.suspended_delete_counter, i),
-            sample_counter(&s, "suspended_poll", || m.suspended_poll_counter, i),
-            sample_counter(&s, "suspended_push", || m.suspended_push_counter, i),
-            sample_counter(&s, "suspended_update", || m.suspended_update_counter, i),
-            sample_counter(&s, "throttled_poll", || m.throttled_poll_counter, i),
-            sample_gauge(&s, "first_message_visibility_timeout_sec", || m.first_message_visibility_timeout_sec_gauge, i),
-            sample_gauge(&s, "last_message_visibility_timeout_sec", || m.last_message_visibility_timeout_sec_gauge, i),
-            sample_gauge(&s, "longest_unpolled_message_sec", || m.longest_unpolled_message_sec_gauge, i),
-          };
+          macro_rules! d {
+            ($f:ident) => {
+              i64::try_from(m.$f).unwrap() - i64::try_from(p.$f).unwrap()
+            };
+          }
+          s.count("empty_poll", d!(empty_poll_counter)).unwrap();
+          s.count("message", d!(message_counter)).unwrap();
+          s.count("missing_delete", d!(missing_delete_counter)).unwrap();
+          s.count("missing_update", d!(missing_update_counter)).unwrap();
+          s.count("successful_delete", d!(successful_delete_counter)).unwrap();
+          s.count("successful_poll", d!(successful_poll_counter)).unwrap();
+          s.count("successful_push", d!(successful_push_counter)).unwrap();
+          s.count("successful_update", d!(successful_update_counter)).unwrap();
+          s.count("suspended_delete", d!(suspended_delete_counter)).unwrap();
+          s.count("suspended_poll", d!(suspended_poll_counter)).unwrap();
+          s.count("suspended_push", d!(suspended_push_counter)).unwrap();
+          s.count("suspended_update", d!(suspended_update_counter)).unwrap();
+          s.count("throttled_poll", d!(throttled_poll_counter)).unwrap();
+          s.gauge("first_message_visibility_timeout_sec", m.first_message_visibility_timeout_sec_gauge).unwrap();
+          s.gauge("last_message_visibility_timeout_sec", m.last_message_visibility_timeout_sec_gauge).unwrap();
+          s.gauge("longest_unpolled_message_sec", m.longest_unpolled_message_sec_gauge).unwrap();
+          p = m;
         };
       }
     });
