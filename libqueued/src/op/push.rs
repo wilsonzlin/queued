@@ -17,6 +17,7 @@ use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
 pub struct OpPushInputMessage {
+  #[serde(with = "serde_bytes")]
   pub contents: Vec<u8>,
   pub visibility_timeout_secs: u32,
 }

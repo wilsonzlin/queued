@@ -86,6 +86,7 @@ struct Cli {
   port: u16,
 
   /// If provided, the server will create and listen on this Unix socket; `interface` and `port` will be ignored.
+  #[arg(long)]
   unix_socket: Option<PathBuf>,
 
   /// Optional StatsD server to send metrics to.

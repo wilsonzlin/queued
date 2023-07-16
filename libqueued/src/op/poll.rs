@@ -26,6 +26,7 @@ pub struct OpPollInput {
 
 #[derive(Serialize, Default)]
 pub struct OpPollOutputMessage {
+  #[serde(with = "serde_bytes")]
   pub contents: Vec<u8>,
   pub id: u64,
   pub poll_tag: u32,

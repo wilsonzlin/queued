@@ -31,11 +31,17 @@ impl Messages {
   }
 
   pub fn youngest_time(&self) -> Option<TimestampSec> {
-    self.ordered_by_visible_time.first_key_value().map(|(k, _v)| *k)
+    self
+      .ordered_by_visible_time
+      .first_key_value()
+      .map(|(k, _v)| *k)
   }
 
   pub fn oldest_time(&self) -> Option<TimestampSec> {
-    self.ordered_by_visible_time.last_key_value().map(|(k, _v)| *k)
+    self
+      .ordered_by_visible_time
+      .last_key_value()
+      .map(|(k, _v)| *k)
   }
 
   pub fn insert(&mut self, id: u64, ts: TimestampSec, poll_tag: u32) {
