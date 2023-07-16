@@ -1,5 +1,5 @@
 use crate::batch_sync::BatchSync;
-use crate::invisible::Messages;
+use crate::messages::Messages;
 use crate::metrics::Metrics;
 use crate::suspend::SuspendState;
 use crate::throttler::Throttler;

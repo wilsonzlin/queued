@@ -30,6 +30,14 @@ impl Messages {
     self.by_id.len()
   }
 
+  pub fn youngest_time(&self) -> Option<TimestampSec> {
+    self.ordered_by_visible_time.first_key_value().map(|(k, _v)| *k)
+  }
+
+  pub fn oldest_time(&self) -> Option<TimestampSec> {
+    self.ordered_by_visible_time.last_key_value().map(|(k, _v)| *k)
+  }
+
   pub fn insert(&mut self, id: u64, ts: TimestampSec, poll_tag: u32) {
     if !self
       .ordered_by_visible_time
@@ -42,7 +50,7 @@ impl Messages {
     let None = self.by_id.insert(id, (ts, poll_tag)) else {
       panic!("ID already exists");
     };
-    self.metrics.invisible_gauge.fetch_add(1, Ordering::Relaxed);
+    self.metrics.message_counter.fetch_add(1, Ordering::Relaxed);
   }
 
   fn remove_if<F: Fn((TimestampSec, u32)) -> bool>(
@@ -61,7 +69,7 @@ impl Messages {
     if set.is_empty() {
       self.ordered_by_visible_time.remove(&ts).unwrap();
     }
-    self.metrics.invisible_gauge.fetch_sub(1, Ordering::Relaxed);
+    self.metrics.message_counter.fetch_sub(1, Ordering::Relaxed);
     Some((ts, poll_tag))
   }
 
@@ -97,7 +105,7 @@ impl Messages {
     }
     self
       .metrics
-      .invisible_gauge
+      .message_counter
       .fetch_sub(removed_ids.len() as u64, Ordering::Relaxed);
     removed_ids
       .into_iter()

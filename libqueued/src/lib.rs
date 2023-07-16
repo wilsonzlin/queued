@@ -1,7 +1,7 @@
 pub mod batch_sync;
 pub mod ctx;
 pub mod db;
-pub mod invisible;
+pub mod messages;
 pub mod metrics;
 pub mod op;
 pub mod suspend;
@@ -88,8 +88,16 @@ impl Queued {
     op_update(self.ctx.clone(), input).await
   }
 
-  pub fn metrics(&self) -> Arc<Metrics> {
-    self.ctx.metrics.clone()
+  pub fn youngest_message_time(&self) -> Option<i64> {
+    self.ctx.messages.lock().youngest_time()
+  }
+
+  pub fn oldest_message_time(&self) -> Option<i64> {
+    self.ctx.messages.lock().oldest_time()
+  }
+
+  pub fn metrics(&self) -> &Arc<Metrics> {
+    &self.ctx.metrics
   }
 
   pub fn suspension(&self) -> Arc<SuspendState> {

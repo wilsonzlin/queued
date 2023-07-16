@@ -1,4 +1,4 @@
-use crate::invisible::Messages;
+use crate::messages::Messages;
 use crate::metrics::Metrics;
 use num_derive::FromPrimitive;
 use off64::int::Off64ReadInt;
