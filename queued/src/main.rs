@@ -108,7 +108,7 @@ async fn main() {
             };
           }
           s.count("empty_poll", d!(empty_poll_counter)).unwrap();
-          s.count("message", d!(message_counter)).unwrap();
+          s.gauge("message_count", m.message_counter).unwrap();
           s.count("missing_delete", d!(missing_delete_counter)).unwrap();
           s.count("missing_update", d!(missing_update_counter)).unwrap();
           s.count("successful_delete", d!(successful_delete_counter)).unwrap();
