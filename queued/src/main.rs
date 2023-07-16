@@ -36,6 +36,7 @@ use std::os::unix::prelude::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::fs::remove_file;
 use tokio::fs::set_permissions;
 use tokio::join;
 use tokio::net::UnixListener;
@@ -167,8 +168,8 @@ async fn main() {
 
   match cli.unix_socket {
     Some(socket_path) => {
-      let unix_listener =
-        UnixListener::bind(socket_path.clone()).expect("failed to bind UNIX socket");
+      let _ = remove_file(&socket_path).await;
+      let unix_listener = UnixListener::bind(&socket_path).expect("failed to bind UNIX socket");
       let stream = UnixListenerStream::new(unix_listener);
       let acceptor = hyper::server::accept::from_stream(stream);
       set_permissions(&socket_path, PermissionsExt::from_mode(0o777))
