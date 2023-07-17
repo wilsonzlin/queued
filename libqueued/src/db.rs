@@ -9,6 +9,7 @@ use rocksdb::Direction;
 use rocksdb::IteratorMode;
 use rocksdb::WriteOptions;
 use rocksdb::DB;
+use tracing::warn;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -83,7 +84,10 @@ pub(crate) fn rocksdb_load(db: &DB, metrics: Arc<Metrics>) -> LoadedData {
     };
     let id = k.read_u64_le_at(1);
     // In some rare situations, it's possible for some pushed messages to persist to the WAL but not yet reach `BatchSync::submit_and_wait` and update the `next_id` key; therefore, we must also update `next_id` to be above any existing ID. This is safe to do as, because if they did not complete `submit_and_wait`, they were never acknowledged nor inserted into the in-memory messages, so could not be polled and deleted and therefore have their IDs reused.
-    next_id = next_id.max(id + 1);
+    if id >= next_id {
+      warn!(next_id, id, "found message with ID greater than next ID");
+      next_id = id + 1;
+    };
     let visible_time = v.read_i40_le_at(0);
     let poll_tag = db
       .get(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id))

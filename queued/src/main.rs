@@ -29,11 +29,16 @@ use clap::arg;
 use clap::command;
 use clap::Parser;
 use libqueued::Queued;
+use std::backtrace::Backtrace;
+use std::io::stderr;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::os::unix::prelude::PermissionsExt;
+use std::panic;
 use std::path::PathBuf;
+use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs::remove_file;
@@ -82,6 +87,30 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
+  // Currently, even with `panic = abort`, thread panics will still not kill the process, so we'll install our own handler to ensure that any panic exits the process, as most likely some internal state/invariant has become corrupted and it's not safe to continue. Copied from https://stackoverflow.com/a/36031130.
+  let _orig_hook = panic::take_hook();
+  panic::set_hook(Box::new(move |panic_info| {
+    let bt = Backtrace::force_capture();
+    // Don't use `tracing::*` as it may be dangerous to do so from within a panic handler (e.g. it could itself panic).
+    // Do not lock stderr as we could deadlock.
+    // Build string first so we (hopefully) do one write syscall to stderr and don't get it mangled.
+    // Prepend with a newline to avoid mangling with any existing half-written stderr line.
+    let json = format!(
+      "\n{}",
+      serde_json::json!({
+        "level": "CRITICAL",
+        "panic": true,
+        "message": panic_info.to_string(),
+        "stack_trace": bt.to_string(),
+      })
+    );
+    // Try our best to write all and then flush, but don't panic if we don't.
+    let mut out = stderr();
+    let _ = out.write_all(json.as_bytes());
+    let _ = out.flush();
+    process::exit(1);
+  }));
+
   tracing_subscriber::fmt().json().init();
 
   let cli = Cli::parse();
@@ -106,6 +135,7 @@ async fn main() {
     info!(
       server = addr.to_string(),
       prefix = cli.statsd_prefix,
+      tags = cli.statsd_tags,
       "sending metrics to StatsD server"
     );
 
