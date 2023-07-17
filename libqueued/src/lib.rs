@@ -31,9 +31,15 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time::Duration;
 use suspend::SuspendState;
 use throttler::Throttler;
 use tracing::info;
+
+#[derive(Clone)]
+pub struct QueuedCfg {
+  pub batch_sync_delay: Duration,
+}
 
 #[derive(Clone)]
 pub struct Queued {
@@ -47,7 +53,7 @@ pub struct ThrottleState {
 }
 
 impl Queued {
-  pub async fn load_and_start(data_dir: &Path) -> Self {
+  pub async fn load_and_start(data_dir: &Path, cfg: QueuedCfg) -> Self {
     let metrics = Arc::new(Metrics::default());
 
     let db = rocksdb_open(data_dir);
@@ -60,7 +66,7 @@ impl Queued {
     );
 
     let ctx = Ctx {
-      batch_sync: BatchSync::start(db.clone(), data.next_id),
+      batch_sync: BatchSync::start(cfg.batch_sync_delay, db.clone(), data.next_id),
       db,
       messages: Mutex::new(data.messages),
       metrics,

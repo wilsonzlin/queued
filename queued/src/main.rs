@@ -70,6 +70,14 @@ struct Cli {
   /// StatsD prefix. Defaults to "queued".
   #[arg(long, default_value = "queued")]
   statsd_prefix: String,
+
+  /// Tags to add to all StatsD metric values sent. Use the format: `name1:value1,name2:value2,name3:value3`.
+  #[arg(long, default_value = "")]
+  statsd_tags: String,
+
+  /// Batch sync delay time, in microseconds. For advanced usage only.
+  #[arg(long, default_value_t = 10_000)]
+  batch_sync_delay_us: u64,
 }
 
 #[tokio::main]
@@ -78,7 +86,10 @@ async fn main() {
 
   let cli = Cli::parse();
 
-  let queued = Queued::load_and_start(&cli.data_dir).await;
+  let queued = Queued::load_and_start(&cli.data_dir, libqueued::QueuedCfg {
+    batch_sync_delay: Duration::from_micros(cli.batch_sync_delay_us),
+  })
+  .await;
 
   let ctx = Arc::new(HttpCtx { queued });
 
@@ -87,7 +98,11 @@ async fn main() {
     socket.set_nonblocking(true).unwrap();
     let sink = UdpMetricSink::from(addr, socket).unwrap();
     let sink = QueuingMetricSink::from(sink);
-    let s = StatsdClient::from_sink(&cli.statsd_prefix, sink);
+    let mut sb = StatsdClient::builder(&cli.statsd_prefix, sink);
+    for (k, v) in cli.statsd_tags.split(',').filter_map(|p| p.split_once(':')) {
+      sb = sb.with_tag(k, v);
+    }
+    let s = sb.build();
     info!(
       server = addr.to_string(),
       prefix = cli.statsd_prefix,

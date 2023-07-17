@@ -7,6 +7,7 @@ use libqueued::op::push::OpPushInput;
 use libqueued::op::push::OpPushInputMessage;
 use libqueued::op::update::OpUpdateInput;
 use libqueued::Queued;
+use libqueued::QueuedCfg;
 use off64::usz;
 use rand::thread_rng;
 use rand::Rng;
@@ -100,7 +101,10 @@ async fn main() {
   create_dir(&cli.data_dir).await.unwrap();
   info!("cleared data dir");
 
-  let queued = Queued::load_and_start(&cli.data_dir).await;
+  let queued = Queued::load_and_start(&cli.data_dir, QueuedCfg {
+    batch_sync_delay: Duration::from_millis(10),
+  })
+  .await;
   info!("queued loaded");
 
   let pool_size = cli

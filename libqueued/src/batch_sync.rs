@@ -15,7 +15,7 @@ pub(crate) struct BatchSync {
 }
 
 impl BatchSync {
-  pub fn start(db: Arc<DB>, mut persisted_next_id: u64) -> Self {
+  pub fn start(batch_sync_delay: Duration, db: Arc<DB>, mut persisted_next_id: u64) -> Self {
     let (sender, mut receiver) = unbounded_channel::<(u64, SignalFutureController<()>)>();
     spawn(async move {
       let mut signals = Vec::new();
@@ -27,7 +27,7 @@ impl BatchSync {
         };
         signals.push(sig);
         // TODO Tune, allow configuration. The optimal value is the highest number while remaining as close to original (i.e. no `flush_wal()`) performance as possible.
-        let deadline = Instant::now() + Duration::from_millis(10);
+        let deadline = Instant::now() + batch_sync_delay;
         while let Ok(Some((nid, sig))) = timeout_at(deadline, receiver.recv()).await {
           if nid > persisted_next_id {
             persisted_next_id = nid;

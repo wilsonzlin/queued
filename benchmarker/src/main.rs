@@ -5,6 +5,7 @@ use libqueued::op::poll::OpPollInput;
 use libqueued::op::push::OpPushInput;
 use libqueued::op::push::OpPushInputMessage;
 use libqueued::Queued;
+use libqueued::QueuedCfg;
 use off64::int::Off64ReadInt;
 use off64::int::Off64WriteMutInt;
 use off64::u64;
@@ -16,6 +17,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::fs::create_dir;
 use tokio::fs::remove_dir_all;
 use tokio::time::Instant;
@@ -66,7 +68,10 @@ async fn main() {
     create_dir(&cli.data_dir).await.unwrap();
     info!("cleared data dir");
   };
-  let queued = Queued::load_and_start(&cli.data_dir).await;
+  let queued = Queued::load_and_start(&cli.data_dir, QueuedCfg {
+    batch_sync_delay: Duration::from_millis(10),
+  })
+  .await;
   info!("queued loaded");
 
   if !cli.skip_push {
