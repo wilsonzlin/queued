@@ -68,7 +68,7 @@ pub(crate) struct LoadedData {
 pub(crate) fn rocksdb_load(db: &DB, metrics: Arc<Metrics>) -> LoadedData {
   let mut messages = Messages::new(metrics);
   // WARNING: We must use next_id instead of simply getting the maximum ID, as that would cause ID reuse if a message is deleted and then a new one is created in quick succession.
-  let next_id = db
+  let mut next_id = db
     .get("next_id")
     .unwrap()
     .map(|raw| raw.read_u64_le_at(0))
@@ -82,6 +82,8 @@ pub(crate) fn rocksdb_load(db: &DB, metrics: Arc<Metrics>) -> LoadedData {
       break;
     };
     let id = k.read_u64_le_at(1);
+    // In some rare situations, it's possible for some pushed messages to persist to the WAL but not yet reach `BatchSync::submit_and_wait` and update the `next_id` key; therefore, we must also update `next_id` to be above any existing ID. This is safe to do as, because if they did not complete `submit_and_wait`, they were never acknowledged nor inserted into the in-memory messages, so could not be polled and deleted and therefore have their IDs reused.
+    next_id = next_id.max(id + 1);
     let visible_time = v.read_i40_le_at(0);
     let poll_tag = db
       .get(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id))

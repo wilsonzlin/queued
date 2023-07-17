@@ -7,7 +7,6 @@ use crate::db::RocksDbKeyPrefix;
 use chrono::Utc;
 use itertools::Itertools;
 use off64::int::create_i40_le;
-use off64::int::create_u64_le;
 use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
@@ -44,8 +43,8 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
   let n = req.messages.len() as u64;
   let base_id = ctx.next_id.fetch_add(n, Ordering::Relaxed);
   let mut to_add = Vec::new();
+  // We must not update the `next_id` key as part of this write batch as we can never be certain that batches are written in order. Instead, we'll do so as part of `submit_and_wait` which guarantees that (if successful) the `next_id` has always persisted to a value greater than or equal to what we want.
   let mut b = WriteBatchWithTransaction::default();
-  b.put("next_id", create_u64_le(base_id + n));
   for (i, msg) in req.messages.into_iter().enumerate() {
     let id = base_id + i as u64;
     let visible_time = Utc::now().timestamp() + msg.visibility_timeout_secs as i64;
@@ -60,7 +59,7 @@ pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushO
   spawn_blocking(move || db.write_opt(b, &rocksdb_write_opts()).unwrap())
     .await
     .unwrap();
-  ctx.batch_sync.submit_and_wait().await;
+  ctx.batch_sync.submit_and_wait(base_id + n).await;
 
   {
     let mut messages = ctx.messages.lock();

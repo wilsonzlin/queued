@@ -60,9 +60,9 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
   let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs as i64;
 
   let msgs = ctx.messages.lock().remove_earliest_n(req.count);
+  assert!(msgs.len() <= req.count);
 
   let mut b = WriteBatchWithTransaction::default();
-  let msg_contents = Arc::new(DashMap::new());
   for &(id, old_poll_tag) in msgs.iter() {
     b.put(
       rocksdb_key(RocksDbKeyPrefix::MessagePollTag, id),
@@ -78,6 +78,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
     .await
     .unwrap();
 
+  let msg_contents = Arc::new(DashMap::new());
   iter(msgs.iter())
     .for_each_concurrent(None, |&(id, _)| {
       let db = ctx.db.clone();
@@ -95,7 +96,7 @@ pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollO
       }
     })
     .await;
-  ctx.batch_sync.submit_and_wait().await;
+  ctx.batch_sync.submit_and_wait(0).await;
 
   {
     let mut messages = ctx.messages.lock();

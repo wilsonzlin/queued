@@ -60,7 +60,7 @@ impl Queued {
     );
 
     let ctx = Ctx {
-      batch_sync: BatchSync::start(db.clone()),
+      batch_sync: BatchSync::start(db.clone(), data.next_id),
       db,
       messages: Mutex::new(data.messages),
       metrics,

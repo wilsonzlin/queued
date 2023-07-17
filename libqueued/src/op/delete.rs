@@ -54,7 +54,7 @@ pub(crate) async fn op_delete(ctx: Arc<Ctx>, req: OpDeleteInput) -> OpResult<OpD
   })
   .await
   .unwrap();
-  ctx.batch_sync.submit_and_wait().await;
+  ctx.batch_sync.submit_and_wait(0).await;
 
   ctx
     .metrics

@@ -64,7 +64,7 @@ pub(crate) async fn op_update(ctx: Arc<Ctx>, req: OpUpdateInput) -> OpResult<OpU
   })
   .await
   .unwrap();
-  ctx.batch_sync.submit_and_wait().await;
+  ctx.batch_sync.submit_and_wait(0).await;
 
   ctx
     .messages

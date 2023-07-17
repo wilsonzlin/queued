@@ -101,14 +101,12 @@ impl Messages {
       {
         removed_ids.push(id);
         assert!(ids.get_mut().remove(&id));
-        if removed_ids.len() == n {
-          break;
-        }
       }
       if ids.get().is_empty() {
         ids.remove();
       }
     }
+    assert!(removed_ids.len() <= n);
     self
       .metrics
       .message_counter
