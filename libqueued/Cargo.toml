@@ -6,7 +6,7 @@ homepage = "https://github.com/wilsonzlin/queued"
 keywords = ["queue", "message", "fifo"]
 categories = ["database-implementations", "web-programming"]
 repository = "https://github.com/wilsonzlin/queued.git"
-version = "0.8.0"
+version = "0.9.0"
 authors = ["Wilson Lin <code@wilsonl.in>"]
 edition = "2021"
 
