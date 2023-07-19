@@ -9,9 +9,9 @@ use rocksdb::Direction;
 use rocksdb::IteratorMode;
 use rocksdb::WriteOptions;
 use rocksdb::DB;
-use tracing::warn;
 use std::path::Path;
 use std::sync::Arc;
+use tracing::warn;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, FromPrimitive)]
 #[repr(u8)]

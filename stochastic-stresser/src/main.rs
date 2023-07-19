@@ -2,6 +2,7 @@ use bytesize::ByteSize;
 use dashmap::DashMap;
 use itertools::Itertools;
 use libqueued::op::delete::OpDeleteInput;
+use libqueued::op::delete::OpDeleteInputMessage;
 use libqueued::op::poll::OpPollInput;
 use libqueued::op::push::OpPushInput;
 use libqueued::op::push::OpPushInputMessage;
@@ -230,7 +231,12 @@ async fn main() {
               progress.update.fetch_add(1, Ordering::Relaxed);
             }
             Task::Delete { id, poll_tag } => {
-              queued.delete(OpDeleteInput { id, poll_tag }).await.unwrap();
+              queued
+                .delete(OpDeleteInput {
+                  messages: vec![OpDeleteInputMessage { id, poll_tag }],
+                })
+                .await
+                .unwrap();
               if progress.delete.fetch_add(1, Ordering::Relaxed) + 1 == cli.messages {
                 complete.store(true, Ordering::Relaxed);
               };

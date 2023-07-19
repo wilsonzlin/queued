@@ -12,9 +12,14 @@ use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
 #[derive(Serialize, Deserialize)]
-pub struct OpDeleteInput {
+pub struct OpDeleteInputMessage {
   pub id: u64,
   pub poll_tag: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OpDeleteInput {
+  pub messages: Vec<OpDeleteInputMessage>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -29,36 +34,34 @@ pub(crate) async fn op_delete(ctx: Arc<Ctx>, req: OpDeleteInput) -> OpResult<OpD
     return Err(OpError::Suspended);
   };
 
-  if !ctx
-    .messages
-    .lock()
-    .remove_if_poll_tag_matches(req.id, req.poll_tag)
+  let mut b = WriteBatchWithTransaction::default();
   {
-    ctx
-      .metrics
-      .missing_delete_counter
-      .fetch_add(1, Ordering::Relaxed);
-    return Err(OpError::MessageNotFound);
+    let mut msgs = ctx.messages.lock();
+    for m in req.messages {
+      if !msgs.remove_if_poll_tag_matches(m.id, m.poll_tag) {
+        ctx
+          .metrics
+          .missing_delete_counter
+          .fetch_add(1, Ordering::Relaxed);
+        continue;
+      };
+      b.delete(rocksdb_key(RocksDbKeyPrefix::MessageData, m.id));
+      b.delete(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, m.id));
+      b.delete(rocksdb_key(
+        RocksDbKeyPrefix::MessageVisibleTimestampSec,
+        m.id,
+      ));
+      ctx
+        .metrics
+        .successful_delete_counter
+        .fetch_add(1, Ordering::Relaxed);
+    }
   };
-
   let db = ctx.db.clone();
-  spawn_blocking(move || {
-    let mut b = WriteBatchWithTransaction::default();
-    b.delete(rocksdb_key(RocksDbKeyPrefix::MessageData, req.id));
-    b.delete(rocksdb_key(RocksDbKeyPrefix::MessagePollTag, req.id));
-    b.delete(rocksdb_key(
-      RocksDbKeyPrefix::MessageVisibleTimestampSec,
-      req.id,
-    ));
-    db.write_opt(b, &rocksdb_write_opts()).unwrap();
-  })
-  .await
-  .unwrap();
+  spawn_blocking(move || db.write_opt(b, &rocksdb_write_opts()).unwrap())
+    .await
+    .unwrap();
   ctx.batch_sync.submit_and_wait(0).await;
 
-  ctx
-    .metrics
-    .successful_delete_counter
-    .fetch_add(1, Ordering::Relaxed);
   Ok(OpDeleteOutput {})
 }
