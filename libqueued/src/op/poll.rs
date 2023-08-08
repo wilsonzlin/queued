@@ -37,7 +37,7 @@ pub struct OpPollOutput {
   pub messages: Vec<OpPollOutputMessage>,
 }
 
-pub(crate) async fn op_poll(ctx: Arc<Ctx>, req: OpPollInput) -> OpResult<OpPollOutput> {
+pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutput> {
   if ctx.suspension.is_poll_suspended() {
     ctx
       .metrics

@@ -41,9 +41,9 @@ pub struct QueuedCfg {
   pub batch_sync_delay: Duration,
 }
 
-#[derive(Clone)]
+// This is intentionally not cheaply cloneable to make it clear and explicit that dropping this will safely close the database and free all resources.
 pub struct Queued {
-  ctx: Arc<Ctx>,
+  ctx: Ctx,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -66,6 +66,7 @@ impl Queued {
     );
 
     let ctx = Ctx {
+      // We can safely create a strong reference clone to the database, as BatchSync's background thread will stop once the channel sender is dropped, which will then drop the DB.
       batch_sync: BatchSync::start(cfg.batch_sync_delay, db.clone(), data.next_id),
       db,
       messages: Mutex::new(data.messages),
@@ -75,23 +76,23 @@ impl Queued {
       throttler: Mutex::new(None),
     };
 
-    Self { ctx: Arc::new(ctx) }
+    Self { ctx }
   }
 
   pub async fn delete(&self, input: OpDeleteInput) -> OpResult<OpDeleteOutput> {
-    op_delete(self.ctx.clone(), input).await
+    op_delete(&self.ctx, input).await
   }
 
   pub async fn poll(&self, input: OpPollInput) -> OpResult<OpPollOutput> {
-    op_poll(self.ctx.clone(), input).await
+    op_poll(&self.ctx, input).await
   }
 
   pub async fn push(&self, input: OpPushInput) -> OpResult<OpPushOutput> {
-    op_push(self.ctx.clone(), input).await
+    op_push(&self.ctx, input).await
   }
 
   pub async fn update(&self, input: OpUpdateInput) -> OpResult<OpUpdateOutput> {
-    op_update(self.ctx.clone(), input).await
+    op_update(&self.ctx, input).await
   }
 
   pub fn youngest_message_time(&self) -> Option<i64> {

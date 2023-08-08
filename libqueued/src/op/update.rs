@@ -11,7 +11,6 @@ use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
@@ -26,7 +25,7 @@ pub struct OpUpdateOutput {
   pub new_poll_tag: u32,
 }
 
-pub(crate) async fn op_update(ctx: Arc<Ctx>, req: OpUpdateInput) -> OpResult<OpUpdateOutput> {
+pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdateOutput> {
   if ctx.suspension.is_update_suspended() {
     ctx
       .metrics

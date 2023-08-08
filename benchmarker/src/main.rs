@@ -68,10 +68,12 @@ async fn main() {
     create_dir(&cli.data_dir).await.unwrap();
     info!("cleared data dir");
   };
-  let queued = Queued::load_and_start(&cli.data_dir, QueuedCfg {
-    batch_sync_delay: Duration::from_millis(10),
-  })
-  .await;
+  let queued = Arc::new(
+    Queued::load_and_start(&cli.data_dir, QueuedCfg {
+      batch_sync_delay: Duration::from_millis(10),
+    })
+    .await,
+  );
   info!("queued loaded");
 
   if !cli.skip_push {

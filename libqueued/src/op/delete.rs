@@ -8,7 +8,6 @@ use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
 #[derive(Serialize, Deserialize)]
@@ -25,7 +24,7 @@ pub struct OpDeleteInput {
 #[derive(Serialize, Deserialize)]
 pub struct OpDeleteOutput {}
 
-pub(crate) async fn op_delete(ctx: Arc<Ctx>, req: OpDeleteInput) -> OpResult<OpDeleteOutput> {
+pub(crate) async fn op_delete(ctx: &Ctx, req: OpDeleteInput) -> OpResult<OpDeleteOutput> {
   if ctx.suspension.is_delete_suspended() {
     ctx
       .metrics

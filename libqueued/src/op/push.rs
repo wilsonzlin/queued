@@ -11,7 +11,6 @@ use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
@@ -31,7 +30,7 @@ pub struct OpPushOutput {
   pub ids: Vec<u64>,
 }
 
-pub(crate) async fn op_push(ctx: Arc<Ctx>, req: OpPushInput) -> OpResult<OpPushOutput> {
+pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutput> {
   if ctx.suspension.is_push_suspended() {
     ctx
       .metrics
