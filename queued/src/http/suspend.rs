@@ -2,14 +2,13 @@ use super::ctx::HttpCtx;
 use super::ctx::QueuedHttpResult;
 use axum::extract::Path;
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use libqueued::Queued;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct SuspendState {
   delete: bool,
   poll: bool,
@@ -29,9 +28,9 @@ fn get_suspend_state(q: &Queued) -> SuspendState {
 pub async fn endpoint_get_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
-) -> MsgPack<SuspendState> {
+) -> QueuedHttpResult<SuspendState> {
   let q = ctx.q(&queue_name)?;
-  MsgPack(get_suspend_state(&q))
+  Ok(MsgPack(get_suspend_state(&q)))
 }
 
 #[derive(Deserialize, Default)]
@@ -47,7 +46,7 @@ pub async fn endpoint_post_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
   MsgPack(req): MsgPack<EndpointPostSuspendInput>,
-) -> QueuedHttpResult<MsgPack<SuspendState>> {
+) -> QueuedHttpResult<SuspendState> {
   let q = ctx.q(&queue_name)?;
   if let Some(s) = req.delete {
     q.suspension().set_delete_suspension(s);
@@ -62,5 +61,5 @@ pub async fn endpoint_post_suspend(
     q.suspension().set_update_suspension(s);
   };
 
-  MsgPack(get_suspend_state(&q))
+  Ok(MsgPack(get_suspend_state(&q)))
 }

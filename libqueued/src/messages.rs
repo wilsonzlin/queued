@@ -26,6 +26,7 @@ impl Messages {
     }
   }
 
+  #[allow(unused)]
   pub fn len(&self) -> usize {
     self.by_id.len()
   }

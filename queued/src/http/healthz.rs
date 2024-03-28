@@ -1,4 +1,3 @@
-use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use serde::Deserialize;
 use serde::Serialize;

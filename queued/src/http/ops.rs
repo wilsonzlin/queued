@@ -35,7 +35,7 @@ pub async fn endpoint_delete(
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpDeleteInput>,
 ) -> QueuedHttpResult<OpDeleteOutput> {
-  transform_op_result(get(&ctx, &q).delete(req).await)
+  transform_op_result(ctx.q(&q)?.delete(req).await)
 }
 
 pub async fn endpoint_poll(
@@ -43,7 +43,7 @@ pub async fn endpoint_poll(
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPollInput>,
 ) -> QueuedHttpResult<OpPollOutput> {
-  transform_op_result(get(&ctx, &q).poll(req).await)
+  transform_op_result(ctx.q(&q)?.poll(req).await)
 }
 
 pub async fn endpoint_push(
@@ -51,7 +51,7 @@ pub async fn endpoint_push(
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPushInput>,
 ) -> QueuedHttpResult<OpPushOutput> {
-  transform_op_result(get(&ctx, &q).push(req).await)
+  transform_op_result(ctx.q(&q)?.push(req).await)
 }
 
 pub async fn endpoint_update(
@@ -59,5 +59,5 @@ pub async fn endpoint_update(
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpUpdateInput>,
 ) -> QueuedHttpResult<OpUpdateOutput> {
-  transform_op_result(get(&ctx, &q).update(req).await)
+  transform_op_result(ctx.q(&q)?.update(req).await)
 }

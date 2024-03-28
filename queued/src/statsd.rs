@@ -1,13 +1,21 @@
+use cadence::Counted;
+use cadence::Gauged;
 use cadence::QueuingMetricSink;
 use cadence::StatsdClient;
 use cadence::UdpMetricSink;
+use chrono::Utc;
 use libqueued::Queued;
+use serde::Serialize;
+use std::cmp::max;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::sync::Weak;
+use std::time::Duration;
+use tokio::spawn;
+use tokio::time::sleep;
 
-#[derive(Serialize, Deserialize)]
-struct Metrics {
+#[derive(Serialize)]
+pub struct Metrics {
   empty_poll_counter: u64,
   message_counter: u64,
   missing_delete_counter: u64,
@@ -27,7 +35,7 @@ struct Metrics {
   longest_unpolled_message_sec_gauge: u64,
 }
 
-fn build_metrics(q: &Queued) -> Metrics {
+pub fn build_metrics(q: &Queued) -> Metrics {
   let now = Utc::now().timestamp();
   let m = q.metrics();
   Metrics {
@@ -75,12 +83,11 @@ pub(crate) fn spawn_statsd_emitter(
   for (k, v) in statsd_tags {
     sb = sb.with_tag(k, v);
   }
-  sb = sb.with_tag("queue", queue);
+  sb = sb.with_tag("queue", queue_name);
   let s = sb.build();
 
   #[rustfmt::skip]
   spawn({
-    let ctx = ctx.clone();
     async move {
       let Some(q) = qref.upgrade() else {
         return;

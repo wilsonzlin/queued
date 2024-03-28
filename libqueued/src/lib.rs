@@ -34,7 +34,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use suspend::SuspendState;
 use throttler::Throttler;
-use tracing::info;
 
 #[derive(Clone)]
 pub struct QueuedCfg {

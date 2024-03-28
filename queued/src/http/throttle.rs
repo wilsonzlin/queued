@@ -1,7 +1,7 @@
 use super::ctx::HttpCtx;
 use super::ctx::QueuedHttpResult;
+use axum::extract::Path;
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use libqueued::ThrottleState;
 use serde::Deserialize;
@@ -14,7 +14,10 @@ pub struct EndpointIO {
   throttle: Option<ThrottleState>,
 }
 
-pub async fn endpoint_get_throttle(State(ctx): State<Arc<HttpCtx>>) -> QueuedHttpResult<EndpointIO> {
+pub async fn endpoint_get_throttle(
+  State(ctx): State<Arc<HttpCtx>>,
+  Path(queue_name): Path<String>,
+) -> QueuedHttpResult<EndpointIO> {
   let q = ctx.q(&queue_name)?;
   Ok(MsgPack(EndpointIO {
     throttle: q.get_throttle_state(),
@@ -23,6 +26,7 @@ pub async fn endpoint_get_throttle(State(ctx): State<Arc<HttpCtx>>) -> QueuedHtt
 
 pub async fn endpoint_post_throttle(
   State(ctx): State<Arc<HttpCtx>>,
+  Path(queue_name): Path<String>,
   MsgPack(req): MsgPack<EndpointIO>,
 ) -> QueuedHttpResult<EndpointIO> {
   let q = ctx.q(&queue_name)?;

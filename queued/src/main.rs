@@ -18,28 +18,26 @@ use crate::http::suspend::endpoint_post_suspend;
 use crate::http::throttle::endpoint_get_throttle;
 use crate::http::throttle::endpoint_post_throttle;
 use axum::extract::DefaultBodyLimit;
+use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
+use axum::routing::put;
 use axum::Router;
 use axum::Server;
-use cadence::Counted;
-use cadence::Gauged;
-use cadence::QueuingMetricSink;
-use cadence::StatsdClient;
-use cadence::UdpMetricSink;
 use clap::arg;
 use clap::command;
 use clap::Parser;
 use dashmap::DashMap;
+use http::queues::endpoint_queue_create;
+use http::queues::endpoint_queue_delete;
+use http::queues::endpoint_queues;
 use libqueued::Queued;
-use std::any::Any;
 use std::backtrace::Backtrace;
 use std::io::stderr;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
-use std::net::UdpSocket;
 use std::os::unix::prelude::PermissionsExt;
 use std::panic;
 use std::path::PathBuf;
@@ -49,8 +47,6 @@ use std::time::Duration;
 use tokio::fs::remove_file;
 use tokio::fs::set_permissions;
 use tokio::net::UnixListener;
-use tokio::spawn;
-use tokio::time::sleep;
 use tokio_stream::wrappers::UnixListenerStream;
 use tracing::info;
 
@@ -121,7 +117,7 @@ async fn main() {
   let cli = Cli::parse();
 
   let batch_sync_delay = Duration::from_micros(cli.batch_sync_delay_us);
-  let mut queues = DashMap::<String, Queued>::new();
+  let queues = DashMap::<String, Arc<Queued>>::new();
   for d in std::fs::read_dir(&cli.data_dir).expect("read data dir") {
     let d = d.expect("read data dir entry");
     let m = d.metadata().expect("get data dir entry metadata");
@@ -129,22 +125,23 @@ async fn main() {
       continue;
     };
     match std::fs::read_to_string(d.path().join(QUEUE_CREATE_OK_MARKER_FILE)) {
-      Ok(c) => assert_eq!(&c, "", "unexpected {QUEUE_CREATE_OK_MARKER_FILE} contents in {d}"),
-      Err(e) if e.kind() == ErrorKind::NotFound => panic!("no {QUEUE_CREATE_OK_MARKER_FILE} found in {d}, which could indicate corruption, external tampering, or a failed creation/deletion (in which case the containing folder can be safely deleted, and must be deleted in order to proceed)"),
-      Err(e) => panic!("failed to read {QUEUE_CREATE_OK_MARKER_FILE} in {d}: {e}"),
+      Ok(c) => assert_eq!(&c, "", "unexpected {QUEUE_CREATE_OK_MARKER_FILE} contents in {d:?}"),
+      Err(e) if e.kind() == ErrorKind::NotFound => panic!("no {QUEUE_CREATE_OK_MARKER_FILE} found in {d:?}, which could indicate corruption, external tampering, or a failed creation/deletion (in which case the containing folder can be safely deleted, and must be deleted in order to proceed)"),
+      Err(e) => panic!("failed to read {QUEUE_CREATE_OK_MARKER_FILE} in {d:?}: {e}"),
     };
     let name = d
       .file_name()
       .into_string()
       .expect("data dir entry as UTF-8 string");
     let q = Queued::load_and_start(&d.path(), libqueued::QueuedCfg { batch_sync_delay }).await;
-    assert!(queues.insert(name, q).is_none());
+    assert!(queues.insert(name, Arc::new(q)).is_none());
   }
 
   let statsd_tags = cli
     .statsd_tags
     .split(',')
-    .filter_map(|p| p.split_once(':').to_owned())
+    .filter_map(|p| p.split_once(':'))
+    .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect::<Vec<_>>();
   let ctx = Arc::new(HttpCtx {
     batch_sync_delay,
@@ -158,16 +155,16 @@ async fn main() {
   #[rustfmt::skip]
   let app = Router::new()
     .route("/healthz", get(endpoint_healthz))
-    .route("/metrics", get(endpoint_metrics))
-    .route("/queues", get(endpoint_queue_list))
-    .route("/queue/:queue", put(endpoint_queue_create))
     .route("/queue/:queue", delete(endpoint_queue_delete))
+    .route("/queue/:queue", put(endpoint_queue_create))
     .route("/queue/:queue/messages/delete", post(endpoint_delete))
     .route("/queue/:queue/messages/poll", post(endpoint_poll))
     .route("/queue/:queue/messages/push", post(endpoint_push))
     .route("/queue/:queue/messages/update", post(endpoint_update))
+    .route("/queue/:queue/metrics", get(endpoint_metrics))
     .route("/queue/:queue/suspend", get(endpoint_get_suspend).post(endpoint_post_suspend))
     .route("/queue/:queue/throttle", get(endpoint_get_throttle).post(endpoint_post_throttle))
+    .route("/queues", get(endpoint_queues))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
     .with_state(ctx.clone());
 

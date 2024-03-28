@@ -1,35 +1,34 @@
 use axum_msgpack::MsgPack;
-use chrono::Utc;
 use dashmap::DashMap;
 use hyper::StatusCode;
 use libqueued::Queued;
-use serde::Deserialize;
 use serde::Serialize;
-use std::cmp::max;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-pub struct QueuedHttpErrorWithDetails<D> {
+#[derive(Serialize)]
+pub struct QueuedHttpError<D: Serialize> {
   pub error: String,
   pub error_details: D,
 }
 
-pub type QueuedHttpResultError<ED> = (StatusCode, MsgPack<QueuedHttpErrorWithDetails<ED>>);
+pub type QueuedHttpResultError<ED> = (StatusCode, MsgPack<QueuedHttpError<ED>>);
 
-pub type QueuedHttpResultWithED<T, ED> = Result<MsgPack<T>>;
+pub type QueuedHttpResultWithED<T, ED> = Result<MsgPack<T>, QueuedHttpResultError<ED>>;
 
 pub type QueuedHttpResult<T> = QueuedHttpResultWithED<T, ()>;
 
-pub fn qerr(error: impl ToString) -> QueuedHttpError {
-  MsgPack(QueuedHttpErrorWithDetails {
+pub fn qerr(error: impl ToString) -> MsgPack<QueuedHttpError<()>> {
+  MsgPack(QueuedHttpError {
     error: error.to_string(),
     error_details: (),
   })
 }
 
-pub fn qerr_d<D>(error: impl ToString, error_details: D) -> QueuedHttpError {
-  MsgPack(QueuedHttpErrorWithDetails {
+pub fn qerr_d<D: Serialize>(error: impl ToString, error_details: D) -> MsgPack<QueuedHttpError<D>> {
+  MsgPack(QueuedHttpError {
     error: error.to_string(),
     error_details,
   })
@@ -42,15 +41,15 @@ pub struct HttpCtx {
   pub queues: DashMap<String, Arc<Queued>>,
   pub statsd_endpoint: Option<SocketAddr>,
   pub statsd_prefix: String,
-  pub statsd_tags: Vec<String>,
+  pub statsd_tags: Vec<(String, String)>,
 }
 
 impl HttpCtx {
   pub fn q(&self, name: &str) -> Result<Arc<Queued>, QueuedHttpResultError<()>> {
     self
       .queues
-      .get(&q)
-      .cloned()
+      .get(name)
+      .map(|q| Arc::clone(&*q))
       .ok_or_else(|| (StatusCode::NOT_FOUND, qerr("QueueNotFound")))
   }
 }

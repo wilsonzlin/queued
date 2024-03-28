@@ -1,23 +1,25 @@
 use super::ctx::HttpCtx;
-use super::ctx::QueuedHttpResult;
 use super::ctx::QueuedHttpResultWithED;
 use crate::http::ctx::qerr_d;
 use crate::statsd::spawn_statsd_emitter;
 use axum::extract::Path;
 use axum::extract::State;
 use axum_msgpack::MsgPack;
-use dashmap::mapref::entry::Entry;
 use hyper::StatusCode;
 use libqueued::Queued;
+use libqueued::QueuedCfg;
 use serde::Serialize;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::warn;
 
 pub const QUEUE_CREATE_OK_MARKER_FILE: &str = ".queued";
 
 #[derive(Serialize)]
 pub struct SysErr {
-  pub code: i32,
+  pub code: Option<i32>,
   pub kind: String,
   pub message: String,
 }
@@ -32,12 +34,14 @@ impl SysErr {
   }
 }
 
+#[derive(Serialize)]
 pub struct EndpointQueuesResponseQueue {
-  pub name: String,
+  name: String,
 }
 
+#[derive(Serialize)]
 pub struct EndpointQueuesResponse {
-  pub queues: Vec<EndpointQueuesResponseQueue>,
+  queues: Vec<EndpointQueuesResponseQueue>,
 }
 
 pub async fn endpoint_queues(State(ctx): State<Arc<HttpCtx>>) -> MsgPack<EndpointQueuesResponse> {
@@ -58,16 +62,14 @@ pub async fn endpoint_queue_create(
 ) -> QueuedHttpResultWithED<(), Option<SysErr>> {
   // We cannot create a temporary dir, because we cannot rename the folder while RocksDB is running. Instead, we'll ensure it succeeded by writing a success file. Also, if we use a different folder name, we lose the ability to use its existence as a locking mechanism to prevent multiple simultaneous creations of the same queue.
   let dir = ctx.data_dir.join(&name);
-  match tokio::fs::create_dir(dir).await {
+  match tokio::fs::create_dir(&dir).await {
     Ok(()) => {}
     Err(e) => {
       return Err(match e.kind() {
-        ErrorKind::AlreadyExists | ErrorKind::IsADirectory => {
-          (StatusCode::CONFLICT, qerr_d("QueueAlreadyExists", None))
-        }
+        ErrorKind::AlreadyExists => (StatusCode::CONFLICT, qerr_d("QueueAlreadyExists", None)),
         _ => (
           StatusCode::INTERNAL_SERVER_ERROR,
-          qerr_d("Sys", SysErr::from_error(e)),
+          qerr_d("Sys", Some(SysErr::from_error(e))),
         ),
       })
     }
@@ -92,7 +94,7 @@ pub async fn endpoint_queue_create(
     Err(e) => {
       return Err((
         StatusCode::INTERNAL_SERVER_ERROR,
-        qerr_d("Sys", SysErr::from_error(e)),
+        qerr_d("Sys", Some(SysErr::from_error(e))),
       ))
     }
   };
@@ -104,7 +106,7 @@ pub async fn endpoint_queue_delete(
   State(ctx): State<Arc<HttpCtx>>,
   Path(name): Path<String>,
 ) -> QueuedHttpResultWithED<(), Option<SysErr>> {
-  let Some(mut q) = ctx.queues.remove(&name) else {
+  let Some((_, mut q)) = ctx.queues.remove(&name) else {
     return Err((StatusCode::NOT_FOUND, qerr_d("NotFound", None)));
   };
   loop {
@@ -124,14 +126,14 @@ pub async fn endpoint_queue_delete(
       }
     };
   }
-  let dir = ctx.data_dir.join(name);
+  let dir = ctx.data_dir.join(&name);
   // Remove marker file first in case remove_dir_all fails or doesn't complete and leaves dir in an intermediate corrupt state.
   match tokio::fs::remove_file(dir.join(QUEUE_CREATE_OK_MARKER_FILE)).await {
     Ok(()) => {}
     Err(e) => {
       return Err((
         StatusCode::INTERNAL_SERVER_ERROR,
-        qerr_d("Sys", SysErr::from_error(e)),
+        qerr_d("Sys", Some(SysErr::from_error(e))),
       ))
     }
   };
@@ -140,7 +142,7 @@ pub async fn endpoint_queue_delete(
     Err(e) => {
       return Err((
         StatusCode::INTERNAL_SERVER_ERROR,
-        qerr_d("Sys", SysErr::from_error(e)),
+        qerr_d("Sys", Some(SysErr::from_error(e))),
       ))
     }
   };
