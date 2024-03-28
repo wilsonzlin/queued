@@ -1,6 +1,7 @@
 import asyncTimeout from "@xtjs/lib/js/asyncTimeout";
 import { ChildProcess, spawn } from "child_process";
 import { randomBytes, randomUUID } from "crypto";
+import { mkdirSync } from "fs";
 import { rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -12,6 +13,7 @@ const ENDPOINT = `http://127.0.0.1:${PORT}`;
 
 describe("QueuedClient", () => {
   const dataDir = join(tmpdir(), `queued-client-js-test-${randomUUID()}`);
+  mkdirSync(dataDir);
   let proc: ChildProcess;
   const client = new QueuedClient({
     apiKey: API_KEY,
@@ -58,7 +60,7 @@ describe("QueuedClient", () => {
         },
       ],
     });
-    const contents = randomBytes(400);
+    const contents = new Uint8Array(randomBytes(400));
     await client.pushQueueMessages("test", [
       { contents, visibilityTimeoutSecs: 1 },
     ]);
@@ -76,7 +78,7 @@ describe("QueuedClient", () => {
     proc.kill();
     // Wait for process to exit.
     await asyncTimeout(3000);
-    await rm(dataDir, { force: true });
+    await rm(dataDir, { recursive: true, force: true });
     console.log("Deleted data dir");
   });
 });

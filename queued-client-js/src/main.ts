@@ -15,7 +15,9 @@ export class QueuedApiError extends Error {
     readonly error: string,
     readonly errorDetails: any | undefined,
   ) {
-    super(`Request to Queued failed with status ${status}: ${error}`);
+    super(
+      `Request to Queued failed with status ${status}: ${error} ${JSON.stringify(errorDetails, null, 2) ?? ""}`,
+    );
   }
 }
 
@@ -48,7 +50,7 @@ export class QueuedClient {
       throw new QueuedApiError(
         res.status,
         resBody?.error,
-        resBody?.errorDetails ?? undefined,
+        resBody?.error_details ?? undefined,
       );
     }
     return resBody;

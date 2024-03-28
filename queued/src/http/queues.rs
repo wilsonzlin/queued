@@ -139,7 +139,7 @@ pub(crate) async fn endpoint_queue_delete(
       ))
     }
   };
-  match tokio::fs::remove_dir_all(name).await {
+  match tokio::fs::remove_dir_all(dir).await {
     Ok(()) => {}
     Err(e) => {
       return Err((
