@@ -1,7 +1,10 @@
 use super::ctx::HttpCtx;
+use super::ctx::QueuedHttpResult;
+use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::Json;
+use axum_msgpack::MsgPack;
+use libqueued::Queued;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -14,19 +17,21 @@ pub struct SuspendState {
   update: bool,
 }
 
-fn get_suspend_state(ctx: &HttpCtx) -> SuspendState {
+fn get_suspend_state(q: &Queued) -> SuspendState {
   SuspendState {
-    delete: ctx.queued.suspension().is_delete_suspended(),
-    poll: ctx.queued.suspension().is_poll_suspended(),
-    push: ctx.queued.suspension().is_push_suspended(),
-    update: ctx.queued.suspension().is_update_suspended(),
+    delete: q.suspension().is_delete_suspended(),
+    poll: q.suspension().is_poll_suspended(),
+    push: q.suspension().is_push_suspended(),
+    update: q.suspension().is_update_suspended(),
   }
 }
 
 pub async fn endpoint_get_suspend(
   State(ctx): State<Arc<HttpCtx>>,
-) -> Result<Json<SuspendState>, (StatusCode, &'static str)> {
-  Ok(Json(get_suspend_state(&ctx)))
+  Path(queue_name): Path<String>,
+) -> MsgPack<SuspendState> {
+  let q = ctx.q(&queue_name)?;
+  MsgPack(get_suspend_state(&q))
 }
 
 #[derive(Deserialize, Default)]
@@ -40,20 +45,22 @@ pub struct EndpointPostSuspendInput {
 
 pub async fn endpoint_post_suspend(
   State(ctx): State<Arc<HttpCtx>>,
-  Json(req): Json<EndpointPostSuspendInput>,
-) -> Result<Json<SuspendState>, (StatusCode, &'static str)> {
+  Path(queue_name): Path<String>,
+  MsgPack(req): MsgPack<EndpointPostSuspendInput>,
+) -> QueuedHttpResult<MsgPack<SuspendState>> {
+  let q = ctx.q(&queue_name)?;
   if let Some(s) = req.delete {
-    ctx.queued.suspension().set_delete_suspension(s);
+    q.suspension().set_delete_suspension(s);
   };
   if let Some(s) = req.poll {
-    ctx.queued.suspension().set_poll_suspension(s);
+    q.suspension().set_poll_suspension(s);
   };
   if let Some(s) = req.push {
-    ctx.queued.suspension().set_push_suspension(s);
+    q.suspension().set_push_suspension(s);
   };
   if let Some(s) = req.update {
-    ctx.queued.suspension().set_update_suspension(s);
+    q.suspension().set_update_suspension(s);
   };
 
-  Ok(Json(get_suspend_state(&ctx)))
+  MsgPack(get_suspend_state(&q))
 }

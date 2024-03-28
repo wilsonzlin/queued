@@ -43,10 +43,11 @@ async fn execute(
         "visibility_timeout_secs": 60,
       }))
       .send()
-      .await else {
-        conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        continue;
-      };
+      .await
+    else {
+      conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+      continue;
+    };
     let res = req
       .error_for_status()
       .unwrap()

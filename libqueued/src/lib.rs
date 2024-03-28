@@ -59,12 +59,6 @@ impl Queued {
     let db = rocksdb_open(data_dir);
     let data = rocksdb_load(&db, metrics.clone());
 
-    info!(
-      message_count = data.messages.len(),
-      next_id = data.next_id,
-      "queued loaded",
-    );
-
     let ctx = Ctx {
       // We can safely create a strong reference clone to the database, as BatchSync's background thread will stop once the channel sender is dropped, which will then drop the DB.
       batch_sync: BatchSync::start(cfg.batch_sync_delay, db.clone(), data.next_id),

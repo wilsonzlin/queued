@@ -3,6 +3,7 @@
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 pub mod http;
+pub mod statsd;
 
 use crate::http::ctx::HttpCtx;
 use crate::http::healthz::endpoint_healthz;
@@ -11,6 +12,7 @@ use crate::http::ops::endpoint_delete;
 use crate::http::ops::endpoint_poll;
 use crate::http::ops::endpoint_push;
 use crate::http::ops::endpoint_update;
+use crate::http::queues::QUEUE_CREATE_OK_MARKER_FILE;
 use crate::http::suspend::endpoint_get_suspend;
 use crate::http::suspend::endpoint_post_suspend;
 use crate::http::throttle::endpoint_get_throttle;
@@ -28,9 +30,12 @@ use cadence::UdpMetricSink;
 use clap::arg;
 use clap::command;
 use clap::Parser;
+use dashmap::DashMap;
 use libqueued::Queued;
+use std::any::Any;
 use std::backtrace::Backtrace;
 use std::io::stderr;
+use std::io::ErrorKind;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
@@ -96,7 +101,7 @@ async fn main() {
     // Build string first so we (hopefully) do one write syscall to stderr and don't get it mangled.
     // Prepend with a newline to avoid mangling with any existing half-written stderr line.
     let json = format!(
-      "\n{}",
+      "\r\n{}\r\n",
       serde_json::json!({
         "level": "CRITICAL",
         "panic": true,
@@ -115,80 +120,54 @@ async fn main() {
 
   let cli = Cli::parse();
 
-  let queued = Queued::load_and_start(&cli.data_dir, libqueued::QueuedCfg {
-    batch_sync_delay: Duration::from_micros(cli.batch_sync_delay_us),
-  })
-  .await;
+  let batch_sync_delay = Duration::from_micros(cli.batch_sync_delay_us);
+  let mut queues = DashMap::<String, Queued>::new();
+  for d in std::fs::read_dir(&cli.data_dir).expect("read data dir") {
+    let d = d.expect("read data dir entry");
+    let m = d.metadata().expect("get data dir entry metadata");
+    if !m.is_dir() {
+      continue;
+    };
+    match std::fs::read_to_string(d.path().join(QUEUE_CREATE_OK_MARKER_FILE)) {
+      Ok(c) => assert_eq!(&c, "", "unexpected {QUEUE_CREATE_OK_MARKER_FILE} contents in {d}"),
+      Err(e) if e.kind() == ErrorKind::NotFound => panic!("no {QUEUE_CREATE_OK_MARKER_FILE} found in {d}, which could indicate corruption, external tampering, or a failed creation/deletion (in which case the containing folder can be safely deleted, and must be deleted in order to proceed)"),
+      Err(e) => panic!("failed to read {QUEUE_CREATE_OK_MARKER_FILE} in {d}: {e}"),
+    };
+    let name = d
+      .file_name()
+      .into_string()
+      .expect("data dir entry as UTF-8 string");
+    let q = Queued::load_and_start(&d.path(), libqueued::QueuedCfg { batch_sync_delay }).await;
+    assert!(queues.insert(name, q).is_none());
+  }
 
-  let ctx = Arc::new(HttpCtx { queued });
+  let statsd_tags = cli
+    .statsd_tags
+    .split(',')
+    .filter_map(|p| p.split_once(':').to_owned())
+    .collect::<Vec<_>>();
+  let ctx = Arc::new(HttpCtx {
+    batch_sync_delay,
+    data_dir: cli.data_dir,
+    queues,
+    statsd_endpoint: cli.statsd,
+    statsd_prefix: cli.statsd_prefix,
+    statsd_tags,
+  });
 
-  if let Some(addr) = cli.statsd {
-    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    socket.set_nonblocking(true).unwrap();
-    let sink = UdpMetricSink::from(addr, socket).unwrap();
-    let sink = QueuingMetricSink::from(sink);
-    let mut sb = StatsdClient::builder(&cli.statsd_prefix, sink);
-    for (k, v) in cli.statsd_tags.split(',').filter_map(|p| p.split_once(':')) {
-      sb = sb.with_tag(k, v);
-    }
-    let s = sb.build();
-    info!(
-      server = addr.to_string(),
-      prefix = cli.statsd_prefix,
-      tags = cli.statsd_tags,
-      "sending metrics to StatsD server"
-    );
-
-    #[rustfmt::skip]
-    spawn({
-      let ctx = ctx.clone();
-      async move {
-        let mut p = ctx.build_server_metrics();
-        loop {
-          sleep(Duration::from_millis(1000)).await;
-          let m = ctx.build_server_metrics();
-          macro_rules! d {
-            ($f:ident) => {
-              i64::try_from(m.$f).unwrap() - i64::try_from(p.$f).unwrap()
-            };
-          }
-          s.count("empty_poll", d!(empty_poll_counter)).unwrap();
-          s.gauge("message_count", m.message_counter).unwrap();
-          s.count("missing_delete", d!(missing_delete_counter)).unwrap();
-          s.count("missing_update", d!(missing_update_counter)).unwrap();
-          s.count("successful_delete", d!(successful_delete_counter)).unwrap();
-          s.count("successful_poll", d!(successful_poll_counter)).unwrap();
-          s.count("successful_push", d!(successful_push_counter)).unwrap();
-          s.count("successful_update", d!(successful_update_counter)).unwrap();
-          s.count("suspended_delete", d!(suspended_delete_counter)).unwrap();
-          s.count("suspended_poll", d!(suspended_poll_counter)).unwrap();
-          s.count("suspended_push", d!(suspended_push_counter)).unwrap();
-          s.count("suspended_update", d!(suspended_update_counter)).unwrap();
-          s.count("throttled_poll", d!(throttled_poll_counter)).unwrap();
-          s.gauge("first_message_visibility_timeout_sec", m.first_message_visibility_timeout_sec_gauge).unwrap();
-          s.gauge("last_message_visibility_timeout_sec", m.last_message_visibility_timeout_sec_gauge).unwrap();
-          s.gauge("longest_unpolled_message_sec", m.longest_unpolled_message_sec_gauge).unwrap();
-          p = m;
-        };
-      }
-    });
-  };
-
+  #[rustfmt::skip]
   let app = Router::new()
-    .route("/delete", post(endpoint_delete))
     .route("/healthz", get(endpoint_healthz))
     .route("/metrics", get(endpoint_metrics))
-    .route("/poll", post(endpoint_poll))
-    .route("/push", post(endpoint_push))
-    .route(
-      "/suspend",
-      get(endpoint_get_suspend).post(endpoint_post_suspend),
-    )
-    .route(
-      "/throttle",
-      get(endpoint_get_throttle).post(endpoint_post_throttle),
-    )
-    .route("/update", post(endpoint_update))
+    .route("/queues", get(endpoint_queue_list))
+    .route("/queue/:queue", put(endpoint_queue_create))
+    .route("/queue/:queue", delete(endpoint_queue_delete))
+    .route("/queue/:queue/messages/delete", post(endpoint_delete))
+    .route("/queue/:queue/messages/poll", post(endpoint_poll))
+    .route("/queue/:queue/messages/push", post(endpoint_push))
+    .route("/queue/:queue/messages/update", post(endpoint_update))
+    .route("/queue/:queue/suspend", get(endpoint_get_suspend).post(endpoint_post_suspend))
+    .route("/queue/:queue/throttle", get(endpoint_get_throttle).post(endpoint_post_throttle))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
     .with_state(ctx.clone());
 

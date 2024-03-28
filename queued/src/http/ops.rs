@@ -1,4 +1,7 @@
+use super::ctx::qerr;
 use super::ctx::HttpCtx;
+use super::ctx::QueuedHttpResult;
+use axum::extract::Path;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
@@ -15,47 +18,46 @@ use libqueued::op::update::OpUpdateOutput;
 use serde::Serialize;
 use std::sync::Arc;
 
-fn transform_op_result<R: Serialize>(
-  result: OpResult<R>,
-) -> Result<MsgPack<R>, (StatusCode, &'static str)> {
-  result.map(|res| MsgPack(res)).map_err(|err| match err {
-    OpError::InvalidPollTag => (StatusCode::BAD_REQUEST, "invalid poll tag"),
-    OpError::MessageNotFound => (StatusCode::NOT_FOUND, "message not found"),
-    OpError::Suspended => (
-      StatusCode::SERVICE_UNAVAILABLE,
-      "this endpoint has been suspended",
-    ),
-    OpError::Throttled => (
-      StatusCode::TOO_MANY_REQUESTS,
-      "this poll has been throttled",
-    ),
+fn transform_op_result<R: Serialize>(result: OpResult<R>) -> QueuedHttpResult<R> {
+  result.map(|res| MsgPack(res)).map_err(|err| {
+    let status = match err {
+      OpError::InvalidPollTag => StatusCode::BAD_REQUEST,
+      OpError::MessageNotFound => StatusCode::NOT_FOUND,
+      OpError::Suspended => StatusCode::SERVICE_UNAVAILABLE,
+      OpError::Throttled => StatusCode::TOO_MANY_REQUESTS,
+    };
+    (status, qerr(format!("{err:?}")))
   })
 }
 
 pub async fn endpoint_delete(
   State(ctx): State<Arc<HttpCtx>>,
+  Path(q): Path<String>,
   MsgPack(req): MsgPack<OpDeleteInput>,
-) -> Result<MsgPack<OpDeleteOutput>, (StatusCode, &'static str)> {
-  transform_op_result(ctx.queued.delete(req).await)
+) -> QueuedHttpResult<OpDeleteOutput> {
+  transform_op_result(get(&ctx, &q).delete(req).await)
 }
 
 pub async fn endpoint_poll(
   State(ctx): State<Arc<HttpCtx>>,
+  Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPollInput>,
-) -> Result<MsgPack<OpPollOutput>, (StatusCode, &'static str)> {
-  transform_op_result(ctx.queued.poll(req).await)
+) -> QueuedHttpResult<OpPollOutput> {
+  transform_op_result(get(&ctx, &q).poll(req).await)
 }
 
 pub async fn endpoint_push(
   State(ctx): State<Arc<HttpCtx>>,
+  Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPushInput>,
-) -> Result<MsgPack<OpPushOutput>, (StatusCode, &'static str)> {
-  transform_op_result(ctx.queued.push(req).await)
+) -> QueuedHttpResult<OpPushOutput> {
+  transform_op_result(get(&ctx, &q).push(req).await)
 }
 
 pub async fn endpoint_update(
   State(ctx): State<Arc<HttpCtx>>,
+  Path(q): Path<String>,
   MsgPack(req): MsgPack<OpUpdateInput>,
-) -> Result<MsgPack<OpUpdateOutput>, (StatusCode, &'static str)> {
-  transform_op_result(ctx.queued.update(req).await)
+) -> QueuedHttpResult<OpUpdateOutput> {
+  transform_op_result(get(&ctx, &q).update(req).await)
 }

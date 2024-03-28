@@ -41,10 +41,11 @@ async fn execute(
           "messages": messages,
         }))
         .send()
-        .await else {
-          conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-          continue;
-        };
+        .await
+      else {
+        conn_err_cnt.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        continue;
+      };
       req
         .error_for_status()
         .unwrap()

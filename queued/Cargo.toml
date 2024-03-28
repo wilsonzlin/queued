@@ -24,6 +24,7 @@ axum-msgpack = "0.3.0"
 cadence = "0.29.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
+dashmap = "5.5.3"
 hyper = { version = "0.14.27", features = ["full"] }
 jemallocator = { version = "0.3", optional = true }
 libqueued = { version = "0.11.0", path = "../libqueued" }

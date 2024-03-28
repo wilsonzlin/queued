@@ -1,5 +1,5 @@
 use axum::http::StatusCode;
-use axum::Json;
+use axum_msgpack::MsgPack;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -10,8 +10,8 @@ pub struct EndpointHealthzOutput {
   version: String,
 }
 
-pub async fn endpoint_healthz() -> Result<Json<EndpointHealthzOutput>, (StatusCode, &'static str)> {
-  Ok(Json(EndpointHealthzOutput {
+pub async fn endpoint_healthz() -> MsgPack<EndpointHealthzOutput> {
+  MsgPack(EndpointHealthzOutput {
     version: VERSION.to_string(),
-  }))
+  })
 }

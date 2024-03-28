@@ -89,7 +89,11 @@ impl Messages {
     let now = Utc::now().timestamp();
     let mut removed_ids = Vec::new();
     while removed_ids.len() < n {
-      let Some(mut ids) = self.ordered_by_visible_time.first_entry().filter(|e| *e.key() <= now) else {
+      let Some(mut ids) = self
+        .ordered_by_visible_time
+        .first_entry()
+        .filter(|e| *e.key() <= now)
+      else {
         break;
       };
       for id in ids
