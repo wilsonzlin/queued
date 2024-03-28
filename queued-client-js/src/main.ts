@@ -3,7 +3,13 @@ import { VArray, VBytes, VInteger, VString, VStruct } from "@wzlin/valid";
 import mapExists from "@xtjs/lib/js/mapExists";
 import withoutUndefined from "@xtjs/lib/js/withoutUndefined";
 
-export class QueuedError extends Error {
+export class QueuedUnauthorizedError extends Error {
+  constructor() {
+    super("Authorization failed");
+  }
+}
+
+export class QueuedApiError extends Error {
   constructor(
     readonly status: number,
     readonly error: string,
@@ -35,8 +41,11 @@ export class QueuedClient {
     });
     const resBodyRaw = new Uint8Array(await res.arrayBuffer());
     const resBody: any = decode(resBodyRaw);
+    if (res.status === 401) {
+      throw new QueuedUnauthorizedError();
+    }
     if (!res.ok) {
-      throw new QueuedError(
+      throw new QueuedApiError(
         res.status,
         resBody?.error,
         resBody?.errorDetails ?? undefined,
@@ -116,14 +125,14 @@ export class QueuedClient {
     message: {
       id: number;
       pollTag: number;
-      visibilityTimeoutSecs: number;
     },
+    newVisibilityTimeoutSecs: number,
   ) {
     // Don't just provide `message` as it may have other properties.
     const raw = await this.req("POST", `${qpp(q)}/messages/update`, {
       id: message.id,
       poll_tag: message.pollTag,
-      visibility_timeout_secs: message.visibilityTimeoutSecs,
+      visibility_timeout_secs: newVisibilityTimeoutSecs,
     });
     const p = new VStruct({
       new_poll_tag: new VInteger(0),

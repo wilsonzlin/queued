@@ -18,6 +18,11 @@ use crate::http::suspend::endpoint_post_suspend;
 use crate::http::throttle::endpoint_get_throttle;
 use crate::http::throttle::endpoint_post_throttle;
 use axum::extract::DefaultBodyLimit;
+use axum::extract::State;
+use axum::http::Request;
+use axum::middleware;
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
@@ -31,6 +36,8 @@ use dashmap::DashMap;
 use http::queues::endpoint_queue_create;
 use http::queues::endpoint_queue_delete;
 use http::queues::endpoint_queues;
+use hyper::HeaderMap;
+use hyper::StatusCode;
 use libqueued::Queued;
 use std::backtrace::Backtrace;
 use std::io::stderr;
@@ -56,6 +63,10 @@ struct Cli {
   /// Path to the data directory.
   #[arg(long)]
   data_dir: PathBuf,
+
+  /// Optional API key that clients must use to authenticate.
+  #[arg(long, default_value = "")]
+  api_key: String,
 
   /// Interface for server to listen on. Defaults to 127.0.0.1.
   #[arg(long, default_value = "127.0.0.1")]
@@ -84,6 +95,23 @@ struct Cli {
   /// Batch sync delay time, in microseconds. For advanced usage only.
   #[arg(long, default_value_t = 10_000)]
   batch_sync_delay_us: u64,
+}
+
+async fn auth_middleware<B>(
+  h: HeaderMap,
+  api_key: State<String>,
+  req: Request<B>,
+  next: Next<B>,
+) -> Result<Response, StatusCode> {
+  if !api_key.is_empty()
+    && !h
+      .get("authorization")
+      .and_then(|v| v.to_str().ok())
+      .is_some_and(|v| v == api_key.as_str())
+  {
+    return Err(StatusCode::UNAUTHORIZED);
+  };
+  Ok(next.run(req).await)
 }
 
 #[tokio::main]
@@ -166,7 +194,8 @@ async fn main() {
     .route("/queue/:queue/throttle", get(endpoint_get_throttle).post(endpoint_post_throttle))
     .route("/queues", get(endpoint_queues))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
-    .with_state(ctx.clone());
+    .with_state(ctx.clone())
+    .route_layer(middleware::from_fn_with_state(cli.api_key, auth_middleware));
 
   match cli.unix_socket {
     Some(socket_path) => {
