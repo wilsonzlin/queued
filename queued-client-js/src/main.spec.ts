@@ -61,16 +61,15 @@ describe("QueuedClient", () => {
       ],
     });
     const contents = new Uint8Array(randomBytes(400));
-    await client.pushQueueMessages("test", [
-      { contents, visibilityTimeoutSecs: 1 },
-    ]);
+    const q = client.queue("test");
+    await q.pushMessagesRaw([{ contents, visibilityTimeoutSecs: 1 }]);
     await asyncTimeout(2000);
-    const polled = await client.pollQueueMessages("test", 10, 15);
+    const polled = await q.pollMessagesRaw(10, 15);
     expect(polled.length).toEqual(1);
     const [p] = polled;
     expect(p.contents).toEqual(contents);
-    await client.updateQueueMessage("test", p, 10);
-    await client.deleteQueueMessages("test", [p]);
+    await q.updateMessage(p, 10);
+    await q.deleteMessages([p]);
     await client.deleteQueue("test");
   });
 
