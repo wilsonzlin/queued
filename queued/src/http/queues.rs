@@ -15,17 +15,17 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
 
-pub const QUEUE_CREATE_OK_MARKER_FILE: &str = ".queued";
+pub(crate) const QUEUE_CREATE_OK_MARKER_FILE: &str = ".queued";
 
 #[derive(Serialize)]
-pub struct SysErr {
-  pub code: Option<i32>,
-  pub kind: String,
-  pub message: String,
+pub(crate) struct SysErr {
+  code: Option<i32>,
+  kind: String,
+  message: String,
 }
 
 impl SysErr {
-  pub fn from_error(e: std::io::Error) -> SysErr {
+  fn from_error(e: std::io::Error) -> SysErr {
     SysErr {
       code: e.raw_os_error(),
       kind: format!("{:?}", e.kind()),
@@ -35,16 +35,18 @@ impl SysErr {
 }
 
 #[derive(Serialize)]
-pub struct EndpointQueuesResponseQueue {
+pub(crate) struct EndpointQueuesResponseQueue {
   name: String,
 }
 
 #[derive(Serialize)]
-pub struct EndpointQueuesResponse {
+pub(crate) struct EndpointQueuesResponse {
   queues: Vec<EndpointQueuesResponseQueue>,
 }
 
-pub async fn endpoint_queues(State(ctx): State<Arc<HttpCtx>>) -> MsgPack<EndpointQueuesResponse> {
+pub(crate) async fn endpoint_queues(
+  State(ctx): State<Arc<HttpCtx>>,
+) -> MsgPack<EndpointQueuesResponse> {
   MsgPack(EndpointQueuesResponse {
     queues: ctx
       .queues
@@ -56,7 +58,7 @@ pub async fn endpoint_queues(State(ctx): State<Arc<HttpCtx>>) -> MsgPack<Endpoin
   })
 }
 
-pub async fn endpoint_queue_create(
+pub(crate) async fn endpoint_queue_create(
   State(ctx): State<Arc<HttpCtx>>,
   Path(name): Path<String>,
 ) -> QueuedHttpResultWithED<(), Option<SysErr>> {
@@ -76,7 +78,7 @@ pub async fn endpoint_queue_create(
   };
   let q = Arc::new(
     Queued::load_and_start(&dir, QueuedCfg {
-      batch_sync_delay: Duration::from_millis(10),
+      batch_sync_delay: ctx.batch_sync_delay,
     })
     .await,
   );
@@ -102,7 +104,7 @@ pub async fn endpoint_queue_create(
   Ok(MsgPack(()))
 }
 
-pub async fn endpoint_queue_delete(
+pub(crate) async fn endpoint_queue_delete(
   State(ctx): State<Arc<HttpCtx>>,
   Path(name): Path<String>,
 ) -> QueuedHttpResultWithED<(), Option<SysErr>> {

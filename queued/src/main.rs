@@ -2,8 +2,8 @@
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-pub mod http;
-pub mod statsd;
+pub(crate) mod http;
+pub(crate) mod statsd;
 
 use crate::http::ctx::HttpCtx;
 use crate::http::healthz::endpoint_healthz;

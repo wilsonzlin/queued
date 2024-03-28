@@ -8,7 +8,7 @@ use axum::http::HeaderMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub async fn endpoint_metrics(
+pub(crate) async fn endpoint_metrics(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
   headers: HeaderMap,

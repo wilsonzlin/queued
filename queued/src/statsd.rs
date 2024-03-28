@@ -15,7 +15,7 @@ use tokio::spawn;
 use tokio::time::sleep;
 
 #[derive(Serialize)]
-pub struct Metrics {
+pub(crate) struct Metrics {
   empty_poll_counter: u64,
   message_counter: u64,
   missing_delete_counter: u64,
@@ -35,7 +35,7 @@ pub struct Metrics {
   longest_unpolled_message_sec_gauge: u64,
 }
 
-pub fn build_metrics(q: &Queued) -> Metrics {
+pub(crate) fn build_metrics(q: &Queued) -> Metrics {
   let now = Utc::now().timestamp();
   let m = q.metrics();
   Metrics {

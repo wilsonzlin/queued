@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::sync::Arc;
 
 #[derive(Serialize)]
-pub struct SuspendState {
+pub(crate) struct SuspendState {
   delete: bool,
   poll: bool,
   push: bool,
@@ -25,7 +25,7 @@ fn get_suspend_state(q: &Queued) -> SuspendState {
   }
 }
 
-pub async fn endpoint_get_suspend(
+pub(crate) async fn endpoint_get_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
 ) -> QueuedHttpResult<SuspendState> {
@@ -35,14 +35,14 @@ pub async fn endpoint_get_suspend(
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
-pub struct EndpointPostSuspendInput {
+pub(crate) struct EndpointPostSuspendInput {
   delete: Option<bool>,
   poll: Option<bool>,
   push: Option<bool>,
   update: Option<bool>,
 }
 
-pub async fn endpoint_post_suspend(
+pub(crate) async fn endpoint_post_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
   MsgPack(req): MsgPack<EndpointPostSuspendInput>,

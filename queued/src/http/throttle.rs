@@ -10,11 +10,11 @@ use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(default)]
-pub struct EndpointIO {
+pub(crate) struct EndpointIO {
   throttle: Option<ThrottleState>,
 }
 
-pub async fn endpoint_get_throttle(
+pub(crate) async fn endpoint_get_throttle(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
 ) -> QueuedHttpResult<EndpointIO> {
@@ -24,7 +24,7 @@ pub async fn endpoint_get_throttle(
   }))
 }
 
-pub async fn endpoint_post_throttle(
+pub(crate) async fn endpoint_post_throttle(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
   MsgPack(req): MsgPack<EndpointIO>,

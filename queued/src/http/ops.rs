@@ -30,7 +30,7 @@ fn transform_op_result<R: Serialize>(result: OpResult<R>) -> QueuedHttpResult<R>
   })
 }
 
-pub async fn endpoint_delete(
+pub(crate) async fn endpoint_delete(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpDeleteInput>,
@@ -38,7 +38,7 @@ pub async fn endpoint_delete(
   transform_op_result(ctx.q(&q)?.delete(req).await)
 }
 
-pub async fn endpoint_poll(
+pub(crate) async fn endpoint_poll(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPollInput>,
@@ -46,7 +46,7 @@ pub async fn endpoint_poll(
   transform_op_result(ctx.q(&q)?.poll(req).await)
 }
 
-pub async fn endpoint_push(
+pub(crate) async fn endpoint_push(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpPushInput>,
@@ -54,7 +54,7 @@ pub async fn endpoint_push(
   transform_op_result(ctx.q(&q)?.push(req).await)
 }
 
-pub async fn endpoint_update(
+pub(crate) async fn endpoint_update(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
   MsgPack(req): MsgPack<OpUpdateInput>,
