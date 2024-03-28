@@ -5,7 +5,10 @@
   "files": [
     "dist/**"
   ],
-  "repository": "https://github.com/wilsonzlin/queued",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wilsonzlin/queued.git"
+  },
   "author": "Wilson Lin <npm@wilsonl.in>",
   "license": "ISC",
   "scripts": {
