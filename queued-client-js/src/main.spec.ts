@@ -1,6 +1,7 @@
+import { encode } from "@msgpack/msgpack";
 import asyncTimeout from "@xtjs/lib/js/asyncTimeout";
 import { ChildProcess, spawn } from "child_process";
-import { randomBytes, randomUUID } from "crypto";
+import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import { rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -60,14 +61,15 @@ describe("QueuedClient", () => {
         },
       ],
     });
-    const contents = new Uint8Array(randomBytes(400));
+    const contents = { a: "true", b: [1, { false: null }] };
+    const contentsRaw = encode(contents);
     const q = client.queue("test");
-    await q.pushMessagesRaw([{ contents, visibilityTimeoutSecs: 1 }]);
+    await q.pushMessages([{ contents, visibilityTimeoutSecs: 1 }]);
     await asyncTimeout(2000);
     const polled = await q.pollMessagesRaw(10, 15);
     expect(polled.length).toEqual(1);
     const [p] = polled;
-    expect(p.contents).toEqual(contents);
+    expect(p.contents).toEqual(contentsRaw);
     await q.updateMessage(p, 10);
     await q.deleteMessages([p]);
     await client.deleteQueue("test");

@@ -108,7 +108,7 @@ export class QueuedQueueClient {
     return await this.pushMessagesRaw(
       messages.map(({ contents, ...m }) => ({
         ...m,
-        contents: encode(m),
+        contents: encode(contents),
       })),
     );
   }
