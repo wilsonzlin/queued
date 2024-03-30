@@ -51,7 +51,7 @@ export class QueuedQueueClient {
   async pollMessagesRaw(count: number, visibilityTimeoutSecs: number) {
     const raw = await this.svc.rawRequest("POST", `${this.qpp}/messages/poll`, {
       count,
-      visibility_timeout_secs: visibilityTimeoutSecs,
+      visibility_timeout_secs: Math.floor(visibilityTimeoutSecs),
     });
     const p = new VStruct({
       messages: new VArray(
@@ -90,7 +90,7 @@ export class QueuedQueueClient {
     const raw = await this.svc.rawRequest("POST", `${this.qpp}/messages/push`, {
       messages: messages.map((m) => ({
         contents: m.contents,
-        visibility_timeout_secs: m.visibilityTimeoutSecs,
+        visibility_timeout_secs: Math.floor(m.visibilityTimeoutSecs),
       })),
     });
     const p = new VStruct({
@@ -127,7 +127,7 @@ export class QueuedQueueClient {
       {
         id: message.id,
         poll_tag: message.pollTag,
-        visibility_timeout_secs: newVisibilityTimeoutSecs,
+        visibility_timeout_secs: Math.floor(newVisibilityTimeoutSecs),
       },
     );
     const p = new VStruct({
