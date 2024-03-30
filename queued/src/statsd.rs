@@ -5,6 +5,8 @@ use cadence::StatsdClient;
 use cadence::UdpMetricSink;
 use chrono::Utc;
 use libqueued::Queued;
+use rand::thread_rng;
+use rand::Rng;
 use serde::Serialize;
 use std::cmp::max;
 use std::net::SocketAddr;
@@ -95,10 +97,13 @@ pub(crate) fn spawn_statsd_emitter(
       let mut p = build_metrics(&q);
       loop {
         sleep(Duration::from_millis(1000)).await;
-        let Some(q) = qref.upgrade() else {
-          break;
+        // Avoid holding on to `qref` as much as possible, it blocks endpoint_delete_queue.
+        let m = {
+          let Some(q) = qref.upgrade() else {
+            break;
+          };
+          build_metrics(&q)
         };
-        let m = build_metrics(&q);
         macro_rules! d {
           ($f:ident) => {
             i64::try_from(m.$f).unwrap() - i64::try_from(p.$f).unwrap()
