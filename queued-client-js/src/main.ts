@@ -1,5 +1,6 @@
 import { decode, encode } from "@msgpack/msgpack";
 import { VArray, VBytes, VInteger, VString, VStruct } from "@wzlin/valid";
+import encodeBase64 from "@xtjs/lib/js/encodeBase64";
 import mapExists from "@xtjs/lib/js/mapExists";
 import withoutUndefined from "@xtjs/lib/js/withoutUndefined";
 
@@ -168,9 +169,17 @@ export class QueuedClient {
       body: mapExists(body, encode),
     });
     const resBodyRaw = new Uint8Array(await res.arrayBuffer());
-    const resBody: any = decode(resBodyRaw);
     if (res.status === 401) {
       throw new QueuedUnauthorizedError();
+    }
+    let resBody: any;
+    try {
+      resBody = decode(resBodyRaw);
+    } catch (err) {
+      throw new Error(
+        `Failed to decode MessagePack response: ${encodeBase64(resBodyRaw)}`,
+        { cause: err },
+      );
     }
     if (!res.ok) {
       throw new QueuedApiError(
