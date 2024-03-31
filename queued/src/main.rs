@@ -186,7 +186,9 @@ async fn main() {
 
       fn priv_keys(p: &Path) -> Vec<Vec<u8>> {
         let mut keys = Vec::new();
-        for item in iter::from_fn(|| read_one(&mut file_buf(p)).transpose()) {
+        // WARNING: This must not be inlined, as that would reset the cursor endlessly.
+        let mut buf = file_buf(p);
+        for item in iter::from_fn(|| read_one(&mut buf).transpose()) {
           match item.expect(&format!("read item from {p:?}")) {
             Item::ECKey(k) | Item::PKCS8Key(k) | Item::RSAKey(k) => keys.push(k),
             _ => {}
