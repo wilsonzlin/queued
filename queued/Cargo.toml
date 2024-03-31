@@ -21,6 +21,7 @@ alloc_jemalloc = ["dep:jemallocator"]
 [dependencies]
 axum = { version = "0.6", features = ["headers", "http2"] }
 axum-msgpack = "0.3.0"
+axum-server = { version = "0.6.0", features = ["tls-rustls"] }
 cadence = "0.29.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
@@ -34,5 +35,6 @@ serde_json = "1.0"
 serde_prometheus = "0.2.3"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1.14", features = ["full"] }
+toml = "0.8.12"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["json"] }
