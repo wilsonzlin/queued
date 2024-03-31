@@ -32,7 +32,19 @@ struct Cli {
   #[arg(long)]
   port: Option<u16>,
 
-  /// If provided, the server will create and listen on this Unix socket; `interface` and `port` will be ignored.
+  /// Optional path to the SSL private key in PEM format to enable SSL. If provided, `ssl_cert` must also be provided.
+  #[arg(long)]
+  ssl_key: Option<PathBuf>,
+
+  /// Optional path to the SSL certificate in PEM format to enable SSL. If provided, `ssl_key` must also be provided.
+  #[arg(long)]
+  ssl_cert: Option<PathBuf>,
+
+  /// Optional path to the SSL CA in PEM format to enable mutual TLS. If provided, all clients must present a valid signed client certificate.
+  #[arg(long)]
+  ssl_ca: Option<PathBuf>,
+
+  /// If provided, the server will create and listen on this Unix socket; `interface`, `port`, and `ssl*` will be ignored.
   #[arg(long)]
   unix_socket: Option<PathBuf>,
 
@@ -60,6 +72,9 @@ struct CfgFile {
   api_key: Option<String>,
   interface: Option<Ipv4Addr>,
   port: Option<u16>,
+  ssl_key: Option<PathBuf>,
+  ssl_cert: Option<PathBuf>,
+  ssl_ca: Option<PathBuf>,
   unix_socket: Option<PathBuf>,
   statsd: Option<SocketAddr>,
   statsd_prefix: Option<String>,
@@ -72,6 +87,9 @@ pub(crate) struct Cfg {
   pub api_key: Option<String>,
   pub interface: Ipv4Addr,
   pub port: u16,
+  pub ssl_key: Option<PathBuf>,
+  pub ssl_cert: Option<PathBuf>,
+  pub ssl_ca: Option<PathBuf>,
   pub unix_socket: Option<PathBuf>,
   pub statsd: Option<SocketAddr>,
   pub statsd_prefix: String,
@@ -119,27 +137,40 @@ pub(crate) fn load_cfg() -> Cfg {
       .or(env_path("QUEUED_DATA_DIR"))
       .or(f.data_dir)
       .expect("no data dir provided"),
+
     api_key: cli.api_key.or(env_str("QUEUED_API_KEY")).or(f.api_key),
+
     interface: cli
       .interface
       .or(env_parsed("QUEUED_INTERFACE"))
       .or(f.interface)
       .unwrap_or_else(|| "127.0.0.1".parse().unwrap()),
+
     port: cli
       .port
       .or(env_parsed("QUEUED_PORT"))
       .or(f.port)
       .unwrap_or(3333),
+
+    ssl_key: cli.ssl_key.or(env_path("QUEUED_SSL_KEY")).or(f.ssl_key),
+
+    ssl_cert: cli.ssl_cert.or(env_path("QUEUED_SSL_CERT")).or(f.ssl_cert),
+
+    ssl_ca: cli.ssl_ca.or(env_path("QUEUED_SSL_CA")).or(f.ssl_ca),
+
     unix_socket: cli
       .unix_socket
       .or(env_path("QUEUED_UNIX_SOCKET"))
       .or(f.unix_socket),
+
     statsd: cli.statsd.or(env_parsed("QUEUED_STATSD")).or(f.statsd),
+
     statsd_prefix: cli
       .statsd_prefix
       .or(env_str("QUEUED_STATSD_PREFIX"))
       .or(f.statsd_prefix)
       .unwrap_or("queued".to_string()),
+
     statsd_tags: cli
       .statsd_tags
       .or(env_str("QUEUED_STATSD_TAGS"))
@@ -149,6 +180,7 @@ pub(crate) fn load_cfg() -> Cfg {
       .filter_map(|p| p.split_once(':'))
       .map(|(k, v)| (k.to_string(), v.to_string()))
       .collect::<Vec<_>>(),
+
     batch_sync_delay: Duration::from_micros(
       cli
         .batch_sync_delay_us
