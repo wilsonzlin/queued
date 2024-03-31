@@ -15,6 +15,7 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::info;
 use tracing::warn;
 
 pub(crate) const QUEUE_CREATE_OK_MARKER_FILE: &str = ".queued";
@@ -102,6 +103,7 @@ pub(crate) async fn endpoint_queue_create(
       ))
     }
   };
+  info!(name, "queue created");
   assert!(ctx.queues.insert(name, q).is_none());
   Ok(MsgPack(()))
 }
@@ -114,9 +116,6 @@ pub(crate) async fn endpoint_queue_delete(
     return Err((StatusCode::NOT_FOUND, qerr_d("NotFound", None)));
   };
   loop {
-    // Avoid being exactly in sync with the metrics exporter or anything else by using a random sleep amount.
-    let sleep_ms = thread_rng().gen_range(500..2000);
-    sleep(Duration::from_secs(sleep_ms)).await;
     match Arc::try_unwrap(q) {
       Ok(db) => {
         drop(db);
@@ -128,6 +127,9 @@ pub(crate) async fn endpoint_queue_delete(
           queue = name,
           "still waiting for in-flight ops to finish before deleting"
         );
+        // Avoid being exactly in sync with the metrics exporter or anything else by using a random sleep amount.
+        let sleep_ms = thread_rng().gen_range(500..2000);
+        sleep(Duration::from_millis(sleep_ms)).await;
         continue;
       }
     };
@@ -152,5 +154,6 @@ pub(crate) async fn endpoint_queue_delete(
       ))
     }
   };
+  info!(name, "queue deleted");
   Ok(MsgPack(()))
 }

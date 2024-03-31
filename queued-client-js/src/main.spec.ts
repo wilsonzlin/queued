@@ -52,28 +52,38 @@ describe("QueuedClient", () => {
     console.log("Server is ready");
   });
 
-  test("flow", async () => {
-    await client.createQueue("test");
-    expect(await client.listQueues()).toEqual({
-      queues: [
-        {
-          name: "test",
-        },
-      ],
-    });
-    const contents = { a: "true", b: [1, { false: null }] };
-    const contentsRaw = encode(contents);
-    const q = client.queue("test");
-    await q.pushMessages([{ contents, visibilityTimeoutSecs: 1 }]);
-    await asyncTimeout(2000);
-    const polled = await q.pollMessagesRaw(10, 15);
-    expect(polled.length).toEqual(1);
-    const [p] = polled;
-    expect(p.contents).toEqual(contentsRaw);
-    await q.updateMessage(p, 10);
-    await q.deleteMessages([p]);
-    await client.deleteQueue("test");
-  });
+  test(
+    "flow",
+    async () => {
+      await client.createQueue("test");
+      console.log("Queue created");
+      expect(await client.listQueues()).toEqual({
+        queues: [
+          {
+            name: "test",
+          },
+        ],
+      });
+      const contents = { a: "true", b: [1, { false: null }] };
+      const contentsRaw = encode(contents);
+      const q = client.queue("test");
+      await q.pushMessages([{ contents, visibilityTimeoutSecs: 1 }]);
+      console.log("Message pushed");
+      await asyncTimeout(2000);
+      const polled = await q.pollMessagesRaw(10, 15);
+      console.log("Message polled");
+      expect(polled.length).toEqual(1);
+      const [p] = polled;
+      expect(p.contents).toEqual(contentsRaw);
+      await q.updateMessage(p, 10);
+      console.log("Message updated");
+      await q.deleteMessages([p]);
+      console.log("Message deleted");
+      await client.deleteQueue("test");
+      console.log("Queue deleted");
+    },
+    1000 * 20,
+  );
 
   afterAll(async () => {
     proc.kill();

@@ -49,6 +49,7 @@ use rustls::Certificate;
 use rustls::PrivateKey;
 use rustls::RootCertStore;
 use rustls::ServerConfig;
+use rustls_pemfile::certs;
 use rustls_pemfile::read_one;
 use rustls_pemfile::Item;
 use std::fs::File;
@@ -90,6 +91,10 @@ async fn main() {
 
   let cfg = load_cfg();
   let queues = DashMap::<String, Arc<Queued>>::new();
+  info!(
+    dir = format!("{:?}", cfg.data_dir),
+    "loading queues from data dir"
+  );
   for d in std::fs::read_dir(&cfg.data_dir).expect("read data dir") {
     let d = d.expect("read data dir entry");
     let m = d.metadata().expect("get data dir entry metadata");
@@ -111,6 +116,7 @@ async fn main() {
       })
       .await,
     );
+    info!(name, "loaded queue");
     if let Some(addr) = cfg.statsd {
       spawn_statsd_emitter(
         addr,
@@ -122,6 +128,7 @@ async fn main() {
     };
     assert!(queues.insert(name, q).is_none());
   }
+  info!(count = queues.len(), "loaded all queues");
 
   let ctx = Arc::new(HttpCtx {
     batch_sync_delay: cfg.batch_sync_delay,
@@ -155,9 +162,12 @@ async fn main() {
       let unix_listener = UnixListener::bind(&socket_path).expect("failed to bind UNIX socket");
       let stream = UnixListenerStream::new(unix_listener);
       let acceptor = hyper::server::accept::from_stream(stream);
-      set_permissions(&socket_path, PermissionsExt::from_mode(0o777))
-        .await
-        .unwrap();
+      set_permissions(
+        &socket_path,
+        PermissionsExt::from_mode(cfg.unix_socket_mode),
+      )
+      .await
+      .unwrap();
       info!(
         unix_socket_path = socket_path.to_string_lossy().to_string(),
         "server started"
@@ -192,9 +202,7 @@ async fn main() {
           let tls_config = match &ca {
             Some(ca) => {
               let mut roots = RootCertStore::empty();
-              for cert in
-                rustls_pemfile::certs(&mut file_buf(ca)).expect("read SSL CA PEM file certificates")
-              {
+              for cert in certs(&mut file_buf(ca)).expect("read SSL CA PEM file certificates") {
                 roots
                   .add(&Certificate(cert))
                   .expect("add SSL CA certificate");
@@ -206,7 +214,7 @@ async fn main() {
 
           let mut tls_config = tls_config
             .with_single_cert(
-              rustls_pemfile::certs(&mut file_buf(&cert))
+              certs(&mut file_buf(&cert))
                 .expect("read certificates in SSL certificate PEM file")
                 .into_iter()
                 .map(|c| Certificate(c))

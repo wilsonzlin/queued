@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
+use tracing::info;
 
 // We cannot simply rely on default value if omitted, as we need to differentiate between a set (but empty/default) value and an omitted value to know if they override/are overriden by defaults, env vars, CLI, etc.
 #[derive(Parser, Debug, Deserialize)]
@@ -48,6 +49,10 @@ struct Cli {
   #[arg(long)]
   unix_socket: Option<PathBuf>,
 
+  /// What mode to set on the UNIX socket. Defaults to 770.
+  #[arg(long)]
+  unix_socket_mode: Option<u32>,
+
   /// Optional StatsD server to send metrics to.
   #[arg(long)]
   statsd: Option<SocketAddr>,
@@ -76,6 +81,7 @@ struct CfgFile {
   ssl_cert: Option<PathBuf>,
   ssl_ca: Option<PathBuf>,
   unix_socket: Option<PathBuf>,
+  unix_socket_mode: Option<u32>,
   statsd: Option<SocketAddr>,
   statsd_prefix: Option<String>,
   statsd_tags: Option<String>,
@@ -91,6 +97,7 @@ pub(crate) struct Cfg {
   pub ssl_cert: Option<PathBuf>,
   pub ssl_ca: Option<PathBuf>,
   pub unix_socket: Option<PathBuf>,
+  pub unix_socket_mode: u32,
   pub statsd: Option<SocketAddr>,
   pub statsd_prefix: String,
   pub statsd_tags: Vec<(String, String)>,
@@ -125,6 +132,7 @@ pub(crate) fn load_cfg() -> Cfg {
     .config
     .or_else(|| env_path("QUEUED_CONFIG"))
     .map(|cfg_path| {
+      info!(path = format!("{:?}", cfg_path), "loading config file");
       let cfg = std::fs::read_to_string(&cfg_path).expect("failed to read config file");
       let cfg: CfgFile = toml::from_str(&cfg).expect("failed to parse config file");
       cfg
@@ -162,6 +170,12 @@ pub(crate) fn load_cfg() -> Cfg {
       .unix_socket
       .or(env_path("QUEUED_UNIX_SOCKET"))
       .or(f.unix_socket),
+
+    unix_socket_mode: cli
+      .unix_socket_mode
+      .or(env_parsed("QUEUED_UNIX_SOCKET_MODE"))
+      .or(f.unix_socket_mode)
+      .unwrap_or(0o770),
 
     statsd: cli.statsd.or(env_parsed("QUEUED_STATSD")).or(f.statsd),
 
