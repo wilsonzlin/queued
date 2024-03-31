@@ -5,8 +5,6 @@ use cadence::StatsdClient;
 use cadence::UdpMetricSink;
 use chrono::Utc;
 use libqueued::Queued;
-use rand::thread_rng;
-use rand::Rng;
 use serde::Serialize;
 use std::cmp::max;
 use std::net::SocketAddr;

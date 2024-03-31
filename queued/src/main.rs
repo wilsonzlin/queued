@@ -17,6 +17,7 @@ use crate::http::suspend::endpoint_get_suspend;
 use crate::http::suspend::endpoint_post_suspend;
 use crate::http::throttle::endpoint_get_throttle;
 use crate::http::throttle::endpoint_post_throttle;
+use crate::statsd::spawn_statsd_emitter;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::State;
 use axum::http::Request;
@@ -143,6 +144,12 @@ async fn main() {
   tracing_subscriber::fmt().json().init();
 
   let cli = Cli::parse();
+  let statsd_tags = cli
+    .statsd_tags
+    .split(',')
+    .filter_map(|p| p.split_once(':'))
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect::<Vec<_>>();
 
   let batch_sync_delay = Duration::from_micros(cli.batch_sync_delay_us);
   let queues = DashMap::<String, Arc<Queued>>::new();
@@ -161,16 +168,20 @@ async fn main() {
       .file_name()
       .into_string()
       .expect("data dir entry as UTF-8 string");
-    let q = Queued::load_and_start(&d.path(), libqueued::QueuedCfg { batch_sync_delay }).await;
-    assert!(queues.insert(name, Arc::new(q)).is_none());
+    let q =
+      Arc::new(Queued::load_and_start(&d.path(), libqueued::QueuedCfg { batch_sync_delay }).await);
+    if let Some(addr) = cli.statsd {
+      spawn_statsd_emitter(
+        addr,
+        &cli.statsd_prefix,
+        &statsd_tags,
+        &name,
+        Arc::downgrade(&q),
+      );
+    };
+    assert!(queues.insert(name, q).is_none());
   }
 
-  let statsd_tags = cli
-    .statsd_tags
-    .split(',')
-    .filter_map(|p| p.split_once(':'))
-    .map(|(k, v)| (k.to_string(), v.to_string()))
-    .collect::<Vec<_>>();
   let ctx = Arc::new(HttpCtx {
     batch_sync_delay,
     data_dir: cli.data_dir,

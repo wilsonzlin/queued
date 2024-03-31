@@ -8,6 +8,8 @@ use axum_msgpack::MsgPack;
 use hyper::StatusCode;
 use libqueued::Queued;
 use libqueued::QueuedCfg;
+use rand::thread_rng;
+use rand::Rng;
 use serde::Serialize;
 use std::io::ErrorKind;
 use std::sync::Arc;
