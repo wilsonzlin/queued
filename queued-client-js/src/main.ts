@@ -178,13 +178,13 @@ export class QueuedClient {
       try {
         const res = await fetch(reqUrl, req);
         const resBodyRaw = new Uint8Array(await res.arrayBuffer());
+        if (res.status === 401) {
+          throw new QueuedUnauthorizedError();
+        }
         const resType = res.headers.get("content-type") ?? "";
         const resBody: any = /^application\/(x-)?msgpack$/.test(resType)
           ? decode(resBodyRaw)
           : decodeUtf8(resBodyRaw);
-        if (res.status === 401) {
-          throw new QueuedUnauthorizedError();
-        }
         if (!res.ok) {
           throw new QueuedApiError(
             res.status,
@@ -192,6 +192,7 @@ export class QueuedClient {
             resBody?.error_details ?? undefined,
           );
         }
+        return resBody;
       } catch (err) {
         if (
           attempt === maxRetries ||
