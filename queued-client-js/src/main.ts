@@ -1,6 +1,7 @@
 import { decode, encode } from "@msgpack/msgpack";
 import { VArray, VBytes, VInteger, VString, VStruct } from "@wzlin/valid";
-import encodeBase64 from "@xtjs/lib/js/encodeBase64";
+import asyncTimeout from "@xtjs/lib/js/asyncTimeout";
+import decodeUtf8 from "@xtjs/lib/js/decodeUtf8";
 import mapExists from "@xtjs/lib/js/mapExists";
 import withoutUndefined from "@xtjs/lib/js/withoutUndefined";
 
@@ -13,7 +14,7 @@ export class QueuedUnauthorizedError extends Error {
 export class QueuedApiError extends Error {
   constructor(
     readonly status: number,
-    readonly error: string,
+    readonly error: string | undefined,
     readonly errorDetails: any | undefined,
   ) {
     super(
@@ -152,6 +153,8 @@ export class QueuedClient {
     private readonly opts: {
       apiKey: string;
       endpoint: string;
+      // WARNING: Most operations mutate some state on the queue (e.g. push, poll).
+      maxRetries?: number;
     },
   ) {}
 
@@ -160,35 +163,48 @@ export class QueuedClient {
   }
 
   async rawRequest(method: string, path: string, body: any) {
-    const res = await fetch(`${this.opts.endpoint}${path}`, {
+    // Construct a URL to ensure it is correct. If it throws, we don't want to retry.
+    const reqUrl = new URL(`${this.opts.endpoint}${path}`);
+    const req = {
       method,
       headers: withoutUndefined({
         Authorization: this.opts.apiKey,
         "Content-Type": mapExists(body, () => "application/msgpack"),
       }),
       body: mapExists(body, encode),
-    });
-    const resBodyRaw = new Uint8Array(await res.arrayBuffer());
-    if (res.status === 401) {
-      throw new QueuedUnauthorizedError();
+    };
+    const { maxRetries = 1 } = this.opts;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(reqUrl, req);
+        const resBodyRaw = new Uint8Array(await res.arrayBuffer());
+        const resType = res.headers.get("content-type") ?? "";
+        const resBody: any = /^application\/(x-)?msgpack$/.test(resType)
+          ? decode(resBodyRaw)
+          : decodeUtf8(resBodyRaw);
+        if (res.status === 401) {
+          throw new QueuedUnauthorizedError();
+        }
+        if (!res.ok) {
+          throw new QueuedApiError(
+            res.status,
+            resBody?.error ?? resBody,
+            resBody?.error_details ?? undefined,
+          );
+        }
+      } catch (err) {
+        if (
+          attempt === maxRetries ||
+          err instanceof QueuedUnauthorizedError ||
+          (err instanceof QueuedApiError && err.status < 500)
+        ) {
+          throw err;
+        }
+        await asyncTimeout(
+          Math.random() * Math.min(1000 * 60 * 10, 2 ** attempt),
+        );
+      }
     }
-    let resBody: any;
-    try {
-      resBody = decode(resBodyRaw);
-    } catch (err) {
-      throw new Error(
-        `Failed to decode MessagePack response: ${encodeBase64(resBodyRaw)}`,
-        { cause: err },
-      );
-    }
-    if (!res.ok) {
-      throw new QueuedApiError(
-        res.status,
-        resBody?.error,
-        resBody?.error_details ?? undefined,
-      );
-    }
-    return resBody;
   }
 
   async deleteQueue(q: string) {
