@@ -1,6 +1,7 @@
 import { decode, encode } from "@msgpack/msgpack";
 import { VArray, VBytes, VInteger, VString, VStruct } from "@wzlin/valid";
 import asyncTimeout from "@xtjs/lib/js/asyncTimeout";
+import bufferToUint8Array from "@xtjs/lib/js/bufferToUint8Array";
 import decodeUtf8 from "@xtjs/lib/js/decodeUtf8";
 import mapExists from "@xtjs/lib/js/mapExists";
 import withoutUndefined from "@xtjs/lib/js/withoutUndefined";
@@ -211,7 +212,8 @@ export class QueuedClient {
         }
         const resType = res.headers["content-type"] ?? "";
         const resBody: any = /^application\/(x-)?msgpack$/.test(resType)
-          ? decode(resBodyRaw)
+          ? // It appears that if Buffer is passed to msgpack.decode, it will parse all bytes as Buffer, but if not, it will use Uint8Array. We want Uint8Array values for all bytes.
+            decode(bufferToUint8Array(resBodyRaw))
           : decodeUtf8(resBodyRaw);
         if (res.statusCode! < 200 || res.statusCode! > 299) {
           throw new QueuedApiError(
