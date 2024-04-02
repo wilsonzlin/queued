@@ -4,6 +4,8 @@ import asyncTimeout from "@xtjs/lib/js/asyncTimeout";
 import decodeUtf8 from "@xtjs/lib/js/decodeUtf8";
 import mapExists from "@xtjs/lib/js/mapExists";
 import withoutUndefined from "@xtjs/lib/js/withoutUndefined";
+import http, { IncomingMessage } from "node:http";
+import https from "node:https";
 
 export class QueuedUnauthorizedError extends Error {
   constructor() {
@@ -155,6 +157,13 @@ export class QueuedClient {
       endpoint: string;
       // WARNING: Most operations mutate some state on the queue (e.g. push, poll).
       maxRetries?: number;
+      ssl?: {
+        key?: string;
+        cert?: string;
+        ca?: string;
+        servername?: string;
+        rejectUnauthorized?: boolean;
+      };
     },
   ) {}
 
@@ -165,29 +174,48 @@ export class QueuedClient {
   async rawRequest(method: string, path: string, body: any) {
     // Construct a URL to ensure it is correct. If it throws, we don't want to retry.
     const reqUrl = new URL(`${this.opts.endpoint}${path}`);
-    const req = {
+    const reqOpt: https.RequestOptions = {
       method,
       headers: withoutUndefined({
         Authorization: this.opts.apiKey,
         "Content-Type": mapExists(body, () => "application/msgpack"),
       }),
-      body: mapExists(body, encode),
+      ca: this.opts.ssl?.ca,
+      cert: this.opts.ssl?.cert,
+      key: this.opts.ssl?.key,
+      servername: this.opts.ssl?.servername,
+      rejectUnauthorized: this.opts.ssl?.rejectUnauthorized,
     };
+    const reqBody = mapExists(body, encode);
     const { maxRetries = 1 } = this.opts;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const res = await fetch(reqUrl, req);
-        const resBodyRaw = new Uint8Array(await res.arrayBuffer());
-        if (res.status === 401) {
+        const res = await new Promise<IncomingMessage>((resolve, reject) => {
+          // For safety, assume https unless explicitly http.
+          const req =
+            reqUrl.protocol === "http:"
+              ? http.request(reqUrl, reqOpt)
+              : https.request(reqUrl, reqOpt);
+          req.on("error", reject).on("response", resolve);
+          req.end(reqBody);
+        });
+        const resBodyRaw = await new Promise<Buffer>((resolve, reject) => {
+          const chunks = Array<Buffer>();
+          res
+            .on("error", reject)
+            .on("data", (c) => chunks.push(c))
+            .on("end", () => resolve(Buffer.concat(chunks)));
+        });
+        if (res.statusCode === 401) {
           throw new QueuedUnauthorizedError();
         }
-        const resType = res.headers.get("content-type") ?? "";
+        const resType = res.headers["content-type"] ?? "";
         const resBody: any = /^application\/(x-)?msgpack$/.test(resType)
           ? decode(resBodyRaw)
           : decodeUtf8(resBodyRaw);
-        if (!res.ok) {
+        if (res.statusCode! < 200 || res.statusCode! > 299) {
           throw new QueuedApiError(
-            res.status,
+            res.statusCode!,
             resBody?.error ?? resBody,
             resBody?.error_details ?? undefined,
           );
