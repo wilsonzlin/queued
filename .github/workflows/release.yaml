@@ -1,0 +1,29 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - "queued-v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  main:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt update && sudo apt install -yq libssl-dev
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/queued
