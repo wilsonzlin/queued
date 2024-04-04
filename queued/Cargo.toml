@@ -21,23 +21,19 @@ alloc_jemalloc = ["dep:jemallocator"]
 [dependencies]
 axum = { version = "0.6", features = ["headers", "http2"] }
 axum-msgpack = "0.3.0"
-axum-server = { version = "0.5.1", features = ["tls-rustls"] }
 cadence = "0.29.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 dashmap = "5.5.3"
-hyper = { version = "0.14.27", features = ["full"] }
 itertools = "0.12.1"
 jemallocator = { version = "0.3", optional = true }
 libqueued = { version = "0.11.0", path = "../libqueued" }
 rand = "0.8.5"
-rustls = "0.21.6"
-rustls-pemfile = "1.0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_prometheus = "0.2.3"
+service-toolkit = "0.3.0"
 tokio = { version = "1", features = ["full"] }
-tokio-stream = { version = "0.1.14", features = ["full"] }
 toml = "0.8.12"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["json"] }

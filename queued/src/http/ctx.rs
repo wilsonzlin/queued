@@ -1,6 +1,6 @@
+use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use dashmap::DashMap;
-use hyper::StatusCode;
 use libqueued::Queued;
 use serde::Serialize;
 use std::net::SocketAddr;
