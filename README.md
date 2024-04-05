@@ -11,11 +11,10 @@ Fast zero-configuration single-binary simple queue service.
 
 ### Install
 
+Ensure you have Rust installed.
+
 ```
-# Ensure you have Rust installed.
 cargo install queued
-# --format WILL DESTROY EXISTING CONTENTS.
-queued --device /dev/my_block_device --format
 ```
 
 ### Run
