@@ -1,8 +1,8 @@
 [package]
 name = "queued-benchmarker"
+publish = false
 version = "0.1.0"
 edition = "2021"
-publish = false
 
 [dependencies]
 bytesize = { version = "1.2.0", features = ["serde"] }
