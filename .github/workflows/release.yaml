@@ -1,5 +1,9 @@
 name: Build and release
 
+# https://github.com/softprops/action-gh-release/issues/236#issuecomment-1150530128
+permissions:
+  contents: write
+
 on:
   push:
     tags:
@@ -12,9 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install system dependencies
-        run: sudo apt update && sudo apt install -yq libssl-dev
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

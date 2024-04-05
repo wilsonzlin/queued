@@ -9,8 +9,6 @@ Fast zero-configuration single-binary simple queue service.
 
 ## Quick start
 
-queued requires persistent storage, and it's preferred to provide a block device directly (e.g. `/dev/my_block_device`) to bypass the file system for higher performance. Alternatively, a standard file can be used too (e.g. `/var/lib/queued/data`). In either case, the entire device/file will be used.
-
 ### Install
 
 ```
@@ -23,13 +21,23 @@ queued --device /dev/my_block_device --format
 ### Run
 
 ```
-queued --device /dev/my_block_device
+queued --data-dir /var/lib/queued
 ```
 
 ### Call
 
 ```jsonc
-// 🌐 POST localhost:3333/push
+// 🌐 PUT /queue/my-q
+{
+  "messages": [
+    { "contents": "Hello, world!", "visibility_timeout_secs": 0 }
+  ]
+}
+// ✅ 200 OK
+{}
+
+
+// 🌐 POST /queue/my-q/messages/push
 {
   "messages": [
     { "contents": "Hello, world!", "visibility_timeout_secs": 0 }
@@ -41,36 +49,44 @@ queued --device /dev/my_block_device
 }
 
 
-// 🌐 POST localhost:3333/poll
+// 🌐 POST /queue/my-q/messages/poll
 {
   "visibility_timeout_secs": 30
 }
 // ✅ 200 OK
 {
-  "message": {
-    "contents": "Hello, world!",
-    "created": "2023-01-03T12:00:00Z",
-    "id": 190234,
-    "poll_count": 1,
-    "poll_tag": "f914659685fcea9d60"
-  }
+  "messages": [
+    {
+      "contents": "Hello, world!",
+      "created": "2023-01-03T12:00:00Z",
+      "id": 190234,
+      "poll_count": 1,
+      "poll_tag": 33
+    }
+  ]
 }
 
 
-// 🌐 POST localhost:3333/update
+// 🌐 POST /queue/my-q/messages/update
 {
   "id": 190234,
-  "poll_tag": "f914659685fcea9d60",
+  "poll_tag": 33,
   "visibility_timeout_secs": 15
 }
 // ✅ 200 OK
-{}
-
-
-// 🌐 POST localhost:3333/delete
 {
-  "id": 190234,
-  "poll_tag": "f914659685fcea9d60"
+  "new_poll_tag": 45
+}
+
+
+// 🌐 POST /queue/my-q/messages/delete
+{
+  "messages": [
+    {
+      "id": 190234,
+      "poll_tag": 45
+    }
+  ]
 }
 // ✅ 200 OK
 {}
@@ -232,7 +248,6 @@ queued_visible 4000000 1678525380549
 
 - Messages are delivered in order of their visibility time. Messages visible at the same time may be delivered in any order. Messages will never be delivered before their visibility time, but may be delivered a few seconds later. Polled messages could be updated or deleted a few seconds after their visibility time for the same reason.
 - The ID and poll tag values are unique and opaque.
-- If you require more than one queue (e.g. channels), check out [jobd](https://github.com/wilsonzlin/jobd).
 - There is no limit on the size of a message. The HTTP API has a limit of 128 MiB per request body.
 - Non-2xx responses are text only and usually contain an error message, so check the status before parsing as JSON.
 - The process will exit when disk space is exhausted.
