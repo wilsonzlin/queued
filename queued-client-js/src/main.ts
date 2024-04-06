@@ -154,7 +154,7 @@ export class QueuedQueueClient {
 export class QueuedClient {
   constructor(
     private readonly opts: {
-      apiKey: string;
+      apiKey?: string;
       endpoint: string;
       // WARNING: Most operations mutate some state on the queue (e.g. push, poll).
       maxRetries?: number;
