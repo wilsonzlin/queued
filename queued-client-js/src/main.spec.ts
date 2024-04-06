@@ -8,7 +8,6 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { QueuedClient } from "./main";
 
-const API_KEY = "123";
 const PORT = 3333;
 const ENDPOINT = `http://127.0.0.1:${PORT}`;
 
@@ -17,7 +16,6 @@ describe("QueuedClient", () => {
   mkdirSync(dataDir);
   let proc: ChildProcess;
   const client = new QueuedClient({
-    apiKey: API_KEY,
     endpoint: ENDPOINT,
   });
   beforeAll(async () => {
@@ -30,8 +28,6 @@ describe("QueuedClient", () => {
         "--",
         "--data-dir",
         dataDir,
-        "--api-key",
-        API_KEY,
         "--port",
         `${PORT}`,
       ],
