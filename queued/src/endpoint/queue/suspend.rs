@@ -2,6 +2,7 @@ use crate::endpoint::HttpCtx;
 use crate::endpoint::QueuedHttpResult;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum_msgpack::MsgPack;
 use libqueued::Queued;
 use serde::Deserialize;
@@ -28,8 +29,9 @@ fn get_suspend_state(q: &Queued) -> SuspendState {
 pub(crate) async fn endpoint_get_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
+  headers: HeaderMap,
 ) -> QueuedHttpResult<SuspendState> {
-  let q = ctx.q(&queue_name)?;
+  let q = ctx.q(&queue_name, &headers)?;
   Ok(MsgPack(get_suspend_state(&q)))
 }
 
@@ -45,9 +47,10 @@ pub(crate) struct EndpointPostSuspendInput {
 pub(crate) async fn endpoint_post_suspend(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
+  headers: HeaderMap,
   MsgPack(req): MsgPack<EndpointPostSuspendInput>,
 ) -> QueuedHttpResult<SuspendState> {
-  let q = ctx.q(&queue_name)?;
+  let q = ctx.q(&queue_name, &headers)?;
   if let Some(s) = req.delete {
     q.suspension().set_delete_suspension(s);
   };

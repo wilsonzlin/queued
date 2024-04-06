@@ -6,6 +6,9 @@ mod cfg;
 mod endpoint;
 mod statsd;
 
+use crate::endpoint::api_key::endpoint_list_api_keys;
+use crate::endpoint::api_key::endpoint_remove_api_key;
+use crate::endpoint::api_key::endpoint_set_api_key;
 use crate::endpoint::healthz::endpoint_healthz;
 use crate::endpoint::queue::metrics::endpoint_metrics;
 use crate::endpoint::queue::ops::endpoint_delete;
@@ -20,13 +23,6 @@ use crate::endpoint::queues::QUEUE_CREATE_OK_MARKER_FILE;
 use crate::endpoint::HttpCtx;
 use crate::statsd::spawn_statsd_emitter;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::State;
-use axum::http::HeaderMap;
-use axum::http::Request;
-use axum::http::StatusCode;
-use axum::middleware::from_fn_with_state;
-use axum::middleware::Next;
-use axum::response::Response;
 use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
@@ -47,24 +43,6 @@ use std::fs::read;
 use std::io::ErrorKind;
 use std::sync::Arc;
 use tracing::info;
-
-async fn auth_middleware<B>(
-  h: HeaderMap,
-  State(api_key): State<Option<String>>,
-  req: Request<B>,
-  next: Next<B>,
-) -> Result<Response, StatusCode> {
-  if let Some(expected_key) = api_key {
-    if !h
-      .get("authorization")
-      .and_then(|v| v.to_str().ok())
-      .is_some_and(|v| v == expected_key.as_str())
-    {
-      return Err(StatusCode::UNAUTHORIZED);
-    };
-  };
-  Ok(next.run(req).await)
-}
 
 #[tokio::main]
 async fn main() {
@@ -113,8 +91,10 @@ async fn main() {
   info!(count = queues.len(), "loaded all queues");
 
   let ctx = Arc::new(HttpCtx {
+    api_keys: cfg.enable_auth.then(|| DashMap::new()),
     batch_sync_delay: cfg.batch_sync_delay,
     data_dir: cfg.data_dir,
+    global_api_key: cfg.global_api_key,
     queues,
     statsd_endpoint: cfg.statsd,
     statsd_prefix: cfg.statsd_prefix,
@@ -124,6 +104,8 @@ async fn main() {
   #[rustfmt::skip]
   let app = Router::new()
     .route("/healthz", get(endpoint_healthz))
+    .route("/api-keys", get(endpoint_list_api_keys))
+    .route("/api-key/:apiKey", put(endpoint_set_api_key).delete(endpoint_remove_api_key))
     .route("/queue/:queue", delete(endpoint_queue_delete))
     .route("/queue/:queue", put(endpoint_queue_create))
     .route("/queue/:queue/messages/delete", post(endpoint_delete))
@@ -135,8 +117,7 @@ async fn main() {
     .route("/queue/:queue/throttle", get(endpoint_get_throttle).post(endpoint_post_throttle))
     .route("/queues", get(endpoint_queues))
     .layer(DefaultBodyLimit::max(1024 * 1024 * 128))
-    .with_state(ctx.clone())
-    .route_layer(from_fn_with_state(cfg.api_key, auth_middleware));
+    .with_state(ctx.clone());
 
   match cfg.unix_socket {
     Some(socket_path) => {

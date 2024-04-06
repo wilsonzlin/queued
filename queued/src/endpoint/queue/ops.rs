@@ -3,6 +3,7 @@ use crate::endpoint::HttpCtx;
 use crate::endpoint::QueuedHttpResult;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use libqueued::op::delete::OpDeleteInput;
@@ -33,31 +34,39 @@ fn transform_op_result<R: Serialize>(result: OpResult<R>) -> QueuedHttpResult<R>
 pub(crate) async fn endpoint_delete(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
+  headers: HeaderMap,
   MsgPack(req): MsgPack<OpDeleteInput>,
 ) -> QueuedHttpResult<OpDeleteOutput> {
-  transform_op_result(ctx.q(&q)?.delete(req).await)
+  let q = ctx.q(&q, &headers)?;
+  transform_op_result(q.delete(req).await)
 }
 
 pub(crate) async fn endpoint_poll(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
+  headers: HeaderMap,
   MsgPack(req): MsgPack<OpPollInput>,
 ) -> QueuedHttpResult<OpPollOutput> {
-  transform_op_result(ctx.q(&q)?.poll(req).await)
+  let q = ctx.q(&q, &headers)?;
+  transform_op_result(q.poll(req).await)
 }
 
 pub(crate) async fn endpoint_push(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
+  headers: HeaderMap,
   MsgPack(req): MsgPack<OpPushInput>,
 ) -> QueuedHttpResult<OpPushOutput> {
-  transform_op_result(ctx.q(&q)?.push(req).await)
+  let q = ctx.q(&q, &headers)?;
+  transform_op_result(q.push(req).await)
 }
 
 pub(crate) async fn endpoint_update(
   State(ctx): State<Arc<HttpCtx>>,
   Path(q): Path<String>,
+  headers: HeaderMap,
   MsgPack(req): MsgPack<OpUpdateInput>,
 ) -> QueuedHttpResult<OpUpdateOutput> {
-  transform_op_result(ctx.q(&q)?.update(req).await)
+  let q = ctx.q(&q, &headers)?;
+  transform_op_result(q.update(req).await)
 }

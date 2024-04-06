@@ -19,12 +19,14 @@ default = []
 alloc_jemalloc = ["dep:jemallocator"]
 
 [dependencies]
+ahash = "0.8.11"
 axum = { version = "0.6", features = ["headers", "http2"] }
 axum-msgpack = "0.3.0"
 cadence = "0.29.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 dashmap = "5.5.3"
+erased-serde = "0.4.4"
 itertools = "0.12.1"
 jemallocator = { version = "0.3", optional = true }
 libqueued = { version = "0.12.0", path = "../libqueued" }

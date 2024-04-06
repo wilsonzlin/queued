@@ -21,9 +21,13 @@ struct Cli {
   #[arg(long)]
   data_dir: Option<PathBuf>,
 
-  /// Optional API key that clients must use to authenticate.
+  /// Optional API key that clients must use to authenticate for managing queues. NOTE: This does not set authentication on queues themselves.
   #[arg(long)]
-  api_key: Option<String>,
+  global_api_key: Option<String>,
+
+  /// Require API key authentication on queues.
+  #[arg(long)]
+  enable_auth: Option<bool>,
 
   /// Interface for server to listen on. Defaults to 127.0.0.1.
   #[arg(long)]
@@ -74,7 +78,8 @@ struct Cli {
 #[derive(Default, Deserialize)]
 struct CfgFile {
   data_dir: Option<PathBuf>,
-  api_key: Option<String>,
+  global_api_key: Option<String>,
+  enable_auth: Option<bool>,
   interface: Option<Ipv4Addr>,
   port: Option<u16>,
   ssl_key: Option<PathBuf>,
@@ -90,7 +95,8 @@ struct CfgFile {
 
 pub(crate) struct Cfg {
   pub data_dir: PathBuf,
-  pub api_key: Option<String>,
+  pub global_api_key: Option<String>,
+  pub enable_auth: bool,
   pub interface: Ipv4Addr,
   pub port: u16,
   pub ssl_key: Option<PathBuf>,
@@ -146,7 +152,16 @@ pub(crate) fn load_cfg() -> Cfg {
       .or(f.data_dir)
       .expect("no data dir provided"),
 
-    api_key: cli.api_key.or(env_str("QUEUED_API_KEY")).or(f.api_key),
+    global_api_key: cli
+      .global_api_key
+      .or(env_str("QUEUED_GLOBAL_API_KEY"))
+      .or(f.global_api_key),
+
+    enable_auth: cli
+      .enable_auth
+      .or(env_parsed("QUEUED_ENABLE_AUTH"))
+      .or(f.enable_auth)
+      .unwrap_or(false),
 
     interface: cli
       .interface

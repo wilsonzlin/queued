@@ -1,5 +1,5 @@
 use crate::endpoint::HttpCtx;
-use crate::endpoint::QueuedHttpResultError;
+use crate::endpoint::QueuedHttpError;
 use crate::statsd::build_metrics;
 use axum::extract::Path;
 use axum::extract::State;
@@ -12,8 +12,8 @@ pub(crate) async fn endpoint_metrics(
   State(ctx): State<Arc<HttpCtx>>,
   Path(queue_name): Path<String>,
   headers: HeaderMap,
-) -> Result<(HeaderMap, String), QueuedHttpResultError<()>> {
-  let q = ctx.q(&queue_name)?;
+) -> Result<(HeaderMap, String), QueuedHttpError> {
+  let q = ctx.q(&queue_name, &headers)?;
   let out = build_metrics(&q);
   let (ct, raw) = match headers.get("accept").map(|h| h.as_bytes()) {
     Some(b"application/json") => ("application/json", serde_json::to_string(&out).unwrap()),

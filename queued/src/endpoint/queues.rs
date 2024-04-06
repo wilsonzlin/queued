@@ -1,9 +1,11 @@
 use super::HttpCtx;
-use super::QueuedHttpResultWithED;
+use super::QueuedHttpResult;
+use crate::endpoint::qerr;
 use crate::endpoint::qerr_d;
 use crate::statsd::spawn_statsd_emitter;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use libqueued::Queued;
@@ -49,8 +51,10 @@ pub(crate) struct EndpointQueuesResponse {
 
 pub(crate) async fn endpoint_queues(
   State(ctx): State<Arc<HttpCtx>>,
-) -> MsgPack<EndpointQueuesResponse> {
-  MsgPack(EndpointQueuesResponse {
+  headers: HeaderMap,
+) -> QueuedHttpResult<EndpointQueuesResponse> {
+  ctx.verify_global_auth(&headers)?;
+  Ok(MsgPack(EndpointQueuesResponse {
     queues: ctx
       .queues
       .iter()
@@ -58,23 +62,25 @@ pub(crate) async fn endpoint_queues(
         name: e.key().clone(),
       })
       .collect(),
-  })
+  }))
 }
 
 pub(crate) async fn endpoint_queue_create(
   State(ctx): State<Arc<HttpCtx>>,
   Path(name): Path<String>,
-) -> QueuedHttpResultWithED<(), Option<SysErr>> {
+  headers: HeaderMap,
+) -> QueuedHttpResult<()> {
+  ctx.verify_global_auth(&headers)?;
   // We cannot create a temporary dir, because we cannot rename the folder while RocksDB is running. Instead, we'll ensure it succeeded by writing a success file. Also, if we use a different folder name, we lose the ability to use its existence as a locking mechanism to prevent multiple simultaneous creations of the same queue.
   let dir = ctx.data_dir.join(&name);
   match tokio::fs::create_dir(&dir).await {
     Ok(()) => {}
     Err(e) => {
       return Err(match e.kind() {
-        ErrorKind::AlreadyExists => (StatusCode::CONFLICT, qerr_d("QueueAlreadyExists", None)),
+        ErrorKind::AlreadyExists => (StatusCode::CONFLICT, qerr("QueueAlreadyExists")),
         _ => (
           StatusCode::INTERNAL_SERVER_ERROR,
-          qerr_d("Sys", Some(SysErr::from_error(e))),
+          qerr_d("Sys", SysErr::from_error(e)),
         ),
       })
     }
@@ -111,9 +117,11 @@ pub(crate) async fn endpoint_queue_create(
 pub(crate) async fn endpoint_queue_delete(
   State(ctx): State<Arc<HttpCtx>>,
   Path(name): Path<String>,
-) -> QueuedHttpResultWithED<(), Option<SysErr>> {
+  headers: HeaderMap,
+) -> QueuedHttpResult<()> {
+  ctx.verify_global_auth(&headers)?;
   let Some((_, mut q)) = ctx.queues.remove(&name) else {
-    return Err((StatusCode::NOT_FOUND, qerr_d("NotFound", None)));
+    return Err((StatusCode::NOT_FOUND, qerr("NotFound")));
   };
   loop {
     match Arc::try_unwrap(q) {
@@ -141,7 +149,7 @@ pub(crate) async fn endpoint_queue_delete(
     Err(e) => {
       return Err((
         StatusCode::INTERNAL_SERVER_ERROR,
-        qerr_d("Sys", Some(SysErr::from_error(e))),
+        qerr_d("Sys", SysErr::from_error(e)),
       ))
     }
   };
@@ -150,7 +158,7 @@ pub(crate) async fn endpoint_queue_delete(
     Err(e) => {
       return Err((
         StatusCode::INTERNAL_SERVER_ERROR,
-        qerr_d("Sys", Some(SysErr::from_error(e))),
+        qerr_d("Sys", SysErr::from_error(e)),
       ))
     }
   };
