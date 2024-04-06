@@ -1,5 +1,5 @@
-use super::ctx::HttpCtx;
-use super::ctx::QueuedHttpResultError;
+use crate::endpoint::HttpCtx;
+use crate::endpoint::QueuedHttpResultError;
 use crate::statsd::build_metrics;
 use axum::extract::Path;
 use axum::extract::State;

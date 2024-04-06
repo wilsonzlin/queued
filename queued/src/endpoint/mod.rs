@@ -1,3 +1,7 @@
+pub(crate) mod healthz;
+pub(crate) mod queue;
+pub(crate) mod queues;
+
 use axum::http::StatusCode;
 use axum_msgpack::MsgPack;
 use dashmap::DashMap;
