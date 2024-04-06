@@ -238,6 +238,32 @@ export class QueuedClient {
     }
   }
 
+  async listApiKeys() {
+    const res = await this.rawRequest("GET", "/api-keys", undefined);
+    return new VStruct({
+      keys: new VArray(
+        new VStruct({
+          key: new VString(),
+          prefix: new VString(),
+        }),
+      ),
+    }).parseRoot(res);
+  }
+
+  async deleteApiKey(apiKey: string) {
+    await this.rawRequest(
+      "DELETE",
+      `/api-key/${encodeURIComponent(apiKey)}`,
+      undefined,
+    );
+  }
+
+  async setApiKey(apiKey: string, queueNamePrefix: string) {
+    await this.rawRequest("PUT", `/api-key/${encodeURIComponent(apiKey)}`, {
+      prefix: queueNamePrefix,
+    });
+  }
+
   async deleteQueue(q: string) {
     await this.rawRequest("DELETE", qpp(q), undefined);
   }
