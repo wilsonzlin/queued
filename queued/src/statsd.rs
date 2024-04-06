@@ -89,10 +89,13 @@ pub(crate) fn spawn_statsd_emitter(
   #[rustfmt::skip]
   spawn({
     async move {
-      let Some(q) = qref.upgrade() else {
-        return;
+      // Avoid holding on to `qref` as much as possible, it blocks endpoint_delete_queue.
+      let mut p = {
+        let Some(q) = qref.upgrade() else {
+          return;
+        };
+        build_metrics(&q)
       };
-      let mut p = build_metrics(&q);
       loop {
         sleep(Duration::from_millis(1000)).await;
         // Avoid holding on to `qref` as much as possible, it blocks endpoint_delete_queue.
