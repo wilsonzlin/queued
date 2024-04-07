@@ -86,14 +86,18 @@ impl Messages {
       .is_some()
   }
 
-  pub fn remove_earliest_n(&mut self, n: usize) -> Vec<(u64, u32)> {
+  pub fn remove_earliest_n(
+    &mut self,
+    n: usize,
+    ignore_existing_visibility_timeouts: bool,
+  ) -> Vec<(u64, u32)> {
     let now = Utc::now().timestamp();
     let mut removed_ids = Vec::new();
     while removed_ids.len() < n {
       let Some(mut ids) = self
         .ordered_by_visible_time
         .first_entry()
-        .filter(|e| *e.key() <= now)
+        .filter(|e| ignore_existing_visibility_timeouts || *e.key() <= now)
       else {
         break;
       };

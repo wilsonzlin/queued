@@ -99,10 +99,15 @@ export class QueuedQueueClient {
     };
   }
 
-  async pollMessagesRaw(count: number, visibilityTimeoutSecs: number) {
+  async pollMessagesRaw(
+    count: number,
+    visibilityTimeoutSecs: number,
+    ignoreExistingVisibilityTimeouts?: boolean,
+  ) {
     const raw = await this.svc.rawRequest("POST", `${this.qpp}/messages/poll`, {
       count,
       visibility_timeout_secs: Math.floor(visibilityTimeoutSecs),
+      ignore_existing_visibility_timeouts: ignoreExistingVisibilityTimeouts,
     });
     const p = new VStruct({
       messages: new VArray(
@@ -123,8 +128,13 @@ export class QueuedQueueClient {
   async pollMessages<T extends MsgPackValue>(
     count: number,
     visibilityTimeoutSecs: number,
+    ignoreExistingVisibilityTimeouts?: boolean,
   ) {
-    const res = await this.pollMessagesRaw(count, visibilityTimeoutSecs);
+    const res = await this.pollMessagesRaw(
+      count,
+      visibilityTimeoutSecs,
+      ignoreExistingVisibilityTimeouts,
+    );
     return res.map(({ contents, ...r }) => ({
       ...r,
       contents: decode(contents) as T,

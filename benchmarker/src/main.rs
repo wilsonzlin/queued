@@ -119,6 +119,7 @@ async fn main() {
             .poll(OpPollInput {
               count: 1,
               visibility_timeout_secs: 3600,
+              ignore_existing_visibility_timeouts: false,
             })
             .await
             .unwrap()

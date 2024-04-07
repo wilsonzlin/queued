@@ -22,6 +22,8 @@ use tokio::task::spawn_blocking;
 pub struct OpPollInput {
   pub count: usize,
   pub visibility_timeout_secs: i64,
+  #[serde(default)]
+  pub ignore_existing_visibility_timeouts: bool, // This can be used for debugging purposes e.g. visibility timeout was set incorrectly.
 }
 
 #[derive(Serialize, Default)]
@@ -59,7 +61,10 @@ pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutpu
 
   let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs as i64;
 
-  let msgs = ctx.messages.lock().remove_earliest_n(req.count);
+  let msgs = ctx
+    .messages
+    .lock()
+    .remove_earliest_n(req.count, req.ignore_existing_visibility_timeouts);
   assert!(msgs.len() <= req.count);
 
   let mut b = WriteBatchWithTransaction::default();
