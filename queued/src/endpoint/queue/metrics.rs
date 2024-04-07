@@ -17,7 +17,10 @@ pub(crate) async fn endpoint_metrics(
   let out = build_metrics(&q);
   let (ct, raw) = match headers.get("accept").map(|h| h.as_bytes()) {
     Some(b"application/json") => ("application/json", serde_json::to_vec(&out).unwrap()),
-    Some(b"application/msgpack") => ("application/msgpack", rmp_serde::to_vec(&out).unwrap()),
+    Some(b"application/msgpack") => (
+      "application/msgpack",
+      rmp_serde::to_vec_named(&out).unwrap(),
+    ),
     _ => (
       "text/plain",
       serde_prometheus::to_string(&out, None, HashMap::new())
