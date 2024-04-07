@@ -1,13 +1,13 @@
 [package]
 name = "queued-benchmarker"
 publish = false
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
 bytesize = { version = "1.2.0", features = ["serde"] }
 futures = "0.3.28"
-libqueued = { version = "0.12.0", path = "../libqueued" }
+libqueued = { version = "0.13.0", path = "../libqueued" }
 off64 = "0.6.0"
 parking_lot = "0.12.1"
 roaring = "0.10.1"
