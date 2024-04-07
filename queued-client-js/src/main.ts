@@ -104,11 +104,15 @@ export class QueuedQueueClient {
     visibilityTimeoutSecs: number,
     ignoreExistingVisibilityTimeouts?: boolean,
   ) {
-    const raw = await this.svc.rawRequest("POST", `${this.qpp}/messages/poll`, {
-      count,
-      visibility_timeout_secs: Math.floor(visibilityTimeoutSecs),
-      ignore_existing_visibility_timeouts: ignoreExistingVisibilityTimeouts,
-    });
+    const raw = await this.svc.rawRequest(
+      "POST",
+      `${this.qpp}/messages/poll`,
+      withoutUndefined({
+        count,
+        visibility_timeout_secs: Math.floor(visibilityTimeoutSecs),
+        ignore_existing_visibility_timeouts: ignoreExistingVisibilityTimeouts,
+      }),
+    );
     const p = new VStruct({
       messages: new VArray(
         new VStruct({
