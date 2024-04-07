@@ -52,6 +52,53 @@ export class QueuedQueueClient {
     return qpp(this.queue);
   }
 
+  async metrics() {
+    const raw = await this.svc.rawRequest(
+      "GET",
+      `${this.qpp}/metrics`,
+      undefined,
+    );
+    const p = new VStruct({
+      empty_poll_counter: new VInteger(0),
+      message_counter: new VInteger(0),
+      missing_delete_counter: new VInteger(0),
+      missing_update_counter: new VInteger(0),
+      successful_delete_counter: new VInteger(0),
+      successful_poll_counter: new VInteger(0),
+      successful_push_counter: new VInteger(0),
+      successful_update_counter: new VInteger(0),
+      suspended_delete_counter: new VInteger(0),
+      suspended_poll_counter: new VInteger(0),
+      suspended_push_counter: new VInteger(0),
+      suspended_update_counter: new VInteger(0),
+      throttled_poll_counter: new VInteger(0),
+
+      first_message_visibility_timeout_sec_gauge: new VInteger(0),
+      last_message_visibility_timeout_sec_gauge: new VInteger(0),
+      longest_unpolled_message_sec_gauge: new VInteger(0),
+    }).parseRoot(raw);
+    return {
+      emptyPollCounter: p.empty_poll_counter,
+      messageCounter: p.message_counter,
+      missingDeleteCounter: p.missing_delete_counter,
+      missingUpdateCounter: p.missing_update_counter,
+      successfulDeleteCounter: p.successful_delete_counter,
+      successfulPollCounter: p.successful_poll_counter,
+      successfulPushCounter: p.successful_push_counter,
+      successfulUpdateCounter: p.successful_update_counter,
+      suspendedDeleteCounter: p.suspended_delete_counter,
+      suspendedPollCounter: p.suspended_poll_counter,
+      suspendedPushCounter: p.suspended_push_counter,
+      suspendedUpdateCounter: p.suspended_update_counter,
+      throttledPollCounter: p.throttled_poll_counter,
+      firstMessageVisibilityTimeoutSecGauge:
+        p.first_message_visibility_timeout_sec_gauge,
+      lastMessageVisibilityTimeoutSecGauge:
+        p.last_message_visibility_timeout_sec_gauge,
+      longestUnpolledMessageSecGauge: p.longest_unpolled_message_sec_gauge,
+    };
+  }
+
   async pollMessagesRaw(count: number, visibilityTimeoutSecs: number) {
     const raw = await this.svc.rawRequest("POST", `${this.qpp}/messages/poll`, {
       count,
@@ -178,6 +225,7 @@ export class QueuedClient {
     const reqOpt: https.RequestOptions = {
       method,
       headers: withoutUndefined({
+        Accept: "application/msgpack",
         Authorization: this.opts.apiKey,
         "Content-Type": mapExists(body, () => "application/msgpack"),
       }),
