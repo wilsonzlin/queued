@@ -42,8 +42,8 @@ pub type QueuedClientResult<T> = Result<T, QueuedClientError>;
 
 #[derive(Clone, Debug)]
 pub struct QueuedClientCfg {
-  api_key: Option<String>,
-  endpoint: String,
+  pub api_key: Option<String>,
+  pub endpoint: String,
 }
 
 #[derive(Clone, Debug)]
