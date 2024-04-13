@@ -4,6 +4,7 @@ members = [
   "benchmarker",
   "libqueued",
   "queued",
+  "queued-client-rs",
   "stochastic-stresser",
 ]
 

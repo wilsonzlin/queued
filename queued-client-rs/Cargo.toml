@@ -1,0 +1,18 @@
+[package]
+name = "queued-client-rs"
+description = "Rust client for queued"
+license = "MIT"
+homepage = "https://github.com/wilsonzlin/queued"
+readme = "README.md"
+repository = "https://github.com/wilsonzlin/queued.git"
+version = "0.1.0"
+authors = ["Wilson Lin <code@wilsonl.in>"]
+edition = "2021"
+
+[dependencies]
+percent-encoding = "2.3.1"
+reqwest = "0.12.3"
+rmp-serde = "1.1.2"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_bytes = "0.11.14"
+serde_with = "3.7.0"
