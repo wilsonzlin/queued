@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_with::serde_as;
 use serde_with::DurationSeconds;
+use std::error::Error;
 use std::fmt::Display;
 use std::time::Duration;
 
@@ -35,7 +36,7 @@ impl Display for QueuedClientError {
   }
 }
 
-impl std::error::Error for QueuedClientError {}
+impl Error for QueuedClientError {}
 
 pub type QueuedClientResult<T> = Result<T, QueuedClientError>;
 
