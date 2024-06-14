@@ -82,7 +82,7 @@ class QueuedQueueClient:
         self,
         count: int,
         visibility_timeout_secs: int,
-        ignore_existing_visibility_timeouts: Optional[bool] = None,
+        ignore_existing_visibility_timeouts: bool = False,
     ) -> List[PollItem]:
         res = self.svc.raw_request(
             "POST",
@@ -108,7 +108,7 @@ class QueuedQueueClient:
         self,
         count: int,
         visibility_timeout_secs: int,
-        ignore_existing_visibility_timeouts: Optional[bool] = None,
+        ignore_existing_visibility_timeouts: bool = False,
     ) -> List[PollItem]:
         res = self.poll_messages_raw(
             count, visibility_timeout_secs, ignore_existing_visibility_timeouts
