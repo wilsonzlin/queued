@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "queued-client-py"
-version = "0.1.2"
+version = "0.1.3"
 description = "Python client for queued"
 authors = ["Wilson Lin <code@wilsonl.in>"]
 readme = "README.md"
