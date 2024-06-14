@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+autoflake --remove-all-unused-imports --recursive --in-place .
+isort --settings-path .isort.cfg .
+black .
