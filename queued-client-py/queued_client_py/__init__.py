@@ -184,7 +184,7 @@ class QueuedClient:
         headers = {}
         headers["Accept"] = "application/msgpack"
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["Authorization"] = self.api_key
         if body is not None:
             headers["Content-Type"] = "application/msgpack"
             body = msgpack.packb(body)
