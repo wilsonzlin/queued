@@ -27,7 +27,7 @@ class QueuedApiError(Exception):
 
 
 def qpp(name: str) -> str:
-    return f"/queue/{quote(name)}"
+    return f"/queue/{quote(name, safe='')}"
 
 
 @dataclass
@@ -164,6 +164,12 @@ class QueuedQueueClient:
         )
 
 
+@dataclass
+class ApiKey:
+    key: str
+    prefix: str
+
+
 class QueuedClient:
     def __init__(self, endpoint: str, api_key: Optional[str] = None):
         self.endpoint = endpoint
@@ -204,3 +210,29 @@ class QueuedClient:
                 res_body.get("error_details") if type(res_body) is dict else None,
             )
         return res_body
+
+    def list_api_keys(self) -> List[ApiKey]:
+        res = self.raw_request("GET", "/api-keys", None)
+        return [ApiKey(**k) for k in res["keys"]]
+
+    def delete_api_key(self, api_key: str):
+        self.raw_request("DELETE", "/api-key/" + quote(api_key, safe=""), None)
+
+    def set_api_key(self, api_key: str, queue_name_prefix: str):
+        self.raw_request(
+            "PUT",
+            "/api-key/" + quote(api_key, safe=""),
+            {
+                "prefix": queue_name_prefix,
+            },
+        )
+
+    def delete_queue(self, queue_name: str):
+        self.raw_request("DELETE", qpp(queue_name), None)
+
+    def create_queue(self, queue_name: str):
+        self.raw_request("PUT", qpp(queue_name), None)
+
+    def list_queues(self) -> List[str]:
+        res = self.raw_request("GET", "/queues", None)
+        return [q["name"] for q in res["queues"]]
