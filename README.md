@@ -27,13 +27,8 @@ queued --data-dir /var/lib/queued
 
 ```jsonc
 // 🌐 PUT /queue/my-q
-{
-  "messages": [
-    { "contents": "Hello, world!", "visibility_timeout_secs": 0 }
-  ]
-}
+// (creates an empty queue)
 // ✅ 200 OK
-{}
 
 
 // 🌐 POST /queue/my-q/messages/push
@@ -44,12 +39,13 @@ queued --data-dir /var/lib/queued
 }
 // ✅ 200 OK
 {
-  "id": 190234
+  "ids": [190234]
 }
 
 
 // 🌐 POST /queue/my-q/messages/poll
 {
+  "count": 10,
   "visibility_timeout_secs": 30
 }
 // ✅ 200 OK
@@ -57,9 +53,7 @@ queued --data-dir /var/lib/queued
   "messages": [
     {
       "contents": "Hello, world!",
-      "created": "2023-01-03T12:00:00Z",
       "id": 190234,
-      "poll_count": 1,
       "poll_tag": 33
     }
   ]
@@ -89,6 +83,11 @@ queued --data-dir /var/lib/queued
 }
 // ✅ 200 OK
 {}
+
+
+// 🌐 DELETE /queue/my-q
+// (deletes the queue)
+// ✅ 200 OK
 ```
 
 ## Performance
@@ -109,7 +108,18 @@ Performing backups can be done by stopping the process and taking a copy of the 
 
 ## Management
 
-`POST /suspend` can suspend specific API endpoints, useful for temporary debugging or emergency intervention without stopping the server. It takes a request body like:
+`GET /queues` lists all queues. Returns:
+
+```json
+{
+  "queues": [
+    { "name": "my-q" },
+    { "name": "another-q" }
+  ]
+}
+```
+
+`POST /queue/:queue/suspend` can suspend specific API endpoints for a queue, useful for temporary debugging or emergency intervention without stopping the server. It takes a request body like:
 
 ```json
 {
@@ -120,9 +130,9 @@ Performing backups can be done by stopping the process and taking a copy of the 
 }
 ```
 
-Set a property to `true` to disable that endpoint, and `false` to re-enable it. Disabled endpoints will return `503 Service Unavailable`. Use `GET /suspend` to get the currently suspended endpoints.
+Set a property to `true` to disable that endpoint, and `false` to re-enable it. Disabled endpoints will return `503 Service Unavailable`. Use `GET /queue/:queue/suspend` to get the currently suspended endpoints.
 
-`POST /throttle` will configure poll throttling, useful for flow control and rate limiting. It takes a request body like:
+`POST /queue/:queue/throttle` will configure poll throttling for a queue, useful for flow control and rate limiting. It takes a request body like:
 
 ```json
 {
@@ -133,7 +143,7 @@ Set a property to `true` to disable that endpoint, and `false` to re-enable it. 
 }
 ```
 
-This will rate limit poll requests to 100 every 60 seconds. No other endpoint is throttled. Throttled requests will return `429 Too Many Requests`. Use `GET /throttle` to get the current throttle setting. To disable throttling:
+This will rate limit poll requests to 100 every 60 seconds. No other endpoint is throttled. Throttled requests will return `429 Too Many Requests`. Use `GET /queue/:queue/throttle` to get the current throttle setting. To disable throttling:
 
 ```json
 {
@@ -143,7 +153,7 @@ This will rate limit poll requests to 100 every 60 seconds. No other endpoint is
 
 `GET /healthz` returns the current build version.
 
-`GET /metrics` returns metrics in the Prometheus or JSON (`Accept: application/json`) format:
+`GET /queue/:queue/metrics` returns metrics in the Prometheus or JSON (`Accept: application/json`) format:
 
 ```
 # HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
