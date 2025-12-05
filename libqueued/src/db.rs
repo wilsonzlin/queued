@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, FromPrimitive)]
 #[repr(u8)]
 pub(crate) enum RocksDbKeyPrefix {
-  MessagePollTag = 1,
+  MessagePollTag = 1, // Only exists for messages that have been polled at least once.
   MessageVisibleTimestampSec = 2,
   MessageData = 3,
 }
@@ -26,15 +26,24 @@ pub(crate) fn rocksdb_key(p: RocksDbKeyPrefix, id: u64) -> [u8; 9] {
   out
 }
 
+// There's no need to optimise for point lookups as our keys are always sequential 8-byte integers with (almost) no skips inserted in order, and our workload is write heavy with almost 1 write for every read.
+// - (Almost) every key exists, so adding bloom filters, hash indices, or in-memory structures only consumes more memory and index space and slows down inserts without much gain in total system performance.
+// - These options generally require careful tuning and come with sensitive tradeoffs.
+// - We still need to be able to scan the entire database initially, so using a prefix extractor isn't applicable; a prefix extractor also wouldn't work well given our key distribution (we insert sequential IDs, so the prefix will be very unbalanced until literally the entire keyspace is used i.e. we run out of IDs).
+// TODO Consider using separate column family for MessageData with blob files enabled.
 fn rocksdb_opts() -> rocksdb::Options {
+  // https://github.com/facebook/rocksdb/wiki/Setup-Options-and-Basic-Tuning#other-general-options.
   let mut opt = rocksdb::Options::default();
   opt.create_if_missing(true);
   opt.set_max_background_jobs(num_cpus::get() as i32 * 2);
   opt.set_bytes_per_sync(1024 * 1024 * 4);
+  // https://github.com/facebook/rocksdb/wiki/BlobDB#performance-tuning
   opt.set_write_buffer_size(1024 * 1024 * 1024 * 1);
+  // By default, RocksDB does not fsync WAL after fwrite, so we can lose data even when Put()/Write() returns with success, which is not OK for us. However, requiring fsync() after every Put()/Write() kills performance; therefore, we instead take over responsibility of both fwrite() and fsync() for the WAL, and do so in the background at intervals.
   opt.set_manual_wal_flush(true);
   opt.set_compression_type(rocksdb::DBCompressionType::None);
 
+  // https://github.com/facebook/rocksdb/wiki/Block-Cache.
   let block_cache = Cache::new_lru_cache(1024 * 1024 * 1024 * 1);
   let mut bbt_opt = BlockBasedOptions::default();
   bbt_opt.set_block_size(1024 * 64);
@@ -57,6 +66,7 @@ pub(crate) struct LoadedData {
 
 pub(crate) fn rocksdb_load(db: &DB, queue_name: String) -> LoadedData {
   let mut messages = Messages::new(queue_name);
+  // WARNING: We must use next_id instead of simply getting the maximum ID, as that would cause ID reuse if a message is deleted and then a new one is created in quick succession.
   let mut next_id = db
     .get("next_id")
     .unwrap()
@@ -71,6 +81,7 @@ pub(crate) fn rocksdb_load(db: &DB, queue_name: String) -> LoadedData {
       break;
     };
     let id = k.read_u64_le_at(1);
+    // In some rare situations, it's possible for some pushed messages to persist to the WAL but not yet reach `BatchSync::submit_and_wait` and update the `next_id` key; therefore, we must also update `next_id` to be above any existing ID. This is safe to do as, because if they did not complete `submit_and_wait`, they were never acknowledged nor inserted into the in-memory messages, so could not be polled and deleted and therefore have their IDs reused.
     if id >= next_id {
       next_id = id + 1;
     };
@@ -85,6 +96,7 @@ pub(crate) fn rocksdb_load(db: &DB, queue_name: String) -> LoadedData {
   LoadedData { messages, next_id }
 }
 
+// This exists in case we need to override options for all writes in the future.
 pub(crate) fn rocksdb_write_opts() -> WriteOptions {
   WriteOptions::default()
 }

@@ -37,9 +37,11 @@ use throttler::Throttler;
 #[derive(Clone)]
 pub struct QueuedCfg {
   pub batch_sync_delay: Duration,
+  /// Name of the queue, used for metric labels.
   pub queue_name: String,
 }
 
+// This is intentionally not cheaply cloneable to make it clear and explicit that dropping this will safely close the database and free all resources.
 pub struct Queued {
   ctx: Ctx,
 }
@@ -56,6 +58,7 @@ impl Queued {
     let data = rocksdb_load(&db, cfg.queue_name.clone());
 
     let ctx = Ctx {
+      // We can safely create a strong reference clone to the database, as BatchSync's background thread will stop once the channel sender is dropped, which will then drop the DB.
       batch_sync: BatchSync::start(cfg.batch_sync_delay, db.clone(), data.next_id),
       db,
       messages: Mutex::new(data.messages),

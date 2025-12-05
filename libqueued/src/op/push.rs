@@ -40,6 +40,7 @@ pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutpu
   let n = req.messages.len() as u64;
   let base_id = ctx.next_id.fetch_add(n, Ordering::Relaxed);
   let mut to_add = Vec::new();
+  // We must not update the `next_id` key as part of this write batch as we can never be certain that batches are written in order. Instead, we'll do so as part of `submit_and_wait` which guarantees that (if successful) the `next_id` has always persisted to a value greater than or equal to what we want.
   let mut b = WriteBatchWithTransaction::default();
   for (i, msg) in req.messages.into_iter().enumerate() {
     let id = base_id + i as u64;

@@ -10,6 +10,7 @@ type TimestampSec = i64;
 
 pub(crate) struct Messages {
   queue_name: String,
+  // We use a map instead of a heap as we want to be able to remove/mutate individual specific entries.
   ordered_by_visible_time: BTreeMap<TimestampSec, HashSet<u64>>,
   by_id: HashMap<u64, (TimestampSec, u32)>,
 }

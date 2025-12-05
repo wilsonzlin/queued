@@ -23,6 +23,7 @@ pub struct OpPollInput {
   pub count: usize,
   pub visibility_timeout_secs: i64,
   #[serde(default)]
+  /// This can be used for debugging purposes e.g. visibility timeout was set incorrectly.
   pub ignore_existing_visibility_timeouts: bool,
 }
 
