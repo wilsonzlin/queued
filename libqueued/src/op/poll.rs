@@ -14,7 +14,6 @@ use off64::int::create_u32_le;
 use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::task::spawn_blocking;
 
@@ -41,20 +40,14 @@ pub struct OpPollOutput {
 
 pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutput> {
   if ctx.suspension.is_poll_suspended() {
-    ctx
-      .metrics
-      .suspended_poll_counter
-      .fetch_add(1, Ordering::Relaxed);
+    ctx.metrics.inc_suspended_poll();
     return Err(OpError::Suspended);
   };
 
   {
     let mut throttler = ctx.throttler.lock();
     if throttler.is_some() && !throttler.as_mut().unwrap().increment_count() {
-      ctx
-        .metrics
-        .throttled_poll_counter
-        .fetch_add(1, Ordering::Relaxed);
+      ctx.metrics.inc_throttled_poll();
       return Err(OpError::Throttled);
     };
   };
@@ -110,10 +103,7 @@ pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutpu
     }
   };
 
-  ctx
-    .metrics
-    .successful_poll_counter
-    .fetch_add(msgs.len() as u64, Ordering::Relaxed);
+  ctx.metrics.inc_successful_poll(msgs.len() as u64);
 
   Ok(OpPollOutput {
     messages: msgs

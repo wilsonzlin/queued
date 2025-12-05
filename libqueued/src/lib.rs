@@ -11,7 +11,7 @@ use crate::batch_sync::BatchSync;
 use ctx::Ctx;
 use db::rocksdb_load;
 use db::rocksdb_open;
-use metrics::Metrics;
+use metrics::QueueMetrics;
 use op::delete::op_delete;
 use op::delete::OpDeleteInput;
 use op::delete::OpDeleteOutput;
@@ -38,6 +38,8 @@ use throttler::Throttler;
 #[derive(Clone)]
 pub struct QueuedCfg {
   pub batch_sync_delay: Duration,
+  /// Name of the queue, used for metric labels.
+  pub queue_name: String,
 }
 
 // This is intentionally not cheaply cloneable to make it clear and explicit that dropping this will safely close the database and free all resources.
@@ -53,7 +55,7 @@ pub struct ThrottleState {
 
 impl Queued {
   pub async fn load_and_start(data_dir: &Path, cfg: QueuedCfg) -> Self {
-    let metrics = Arc::new(Metrics::default());
+    let metrics = QueueMetrics::new(&cfg.queue_name);
 
     let db = rocksdb_open(data_dir);
     let data = rocksdb_load(&db, metrics.clone());
@@ -96,7 +98,7 @@ impl Queued {
     self.ctx.messages.lock().oldest_time()
   }
 
-  pub fn metrics(&self) -> &Arc<Metrics> {
+  pub fn metrics(&self) -> &QueueMetrics {
     &self.ctx.metrics
   }
 

@@ -1,5 +1,5 @@
 use crate::messages::Messages;
-use crate::metrics::Metrics;
+use crate::metrics::QueueMetrics;
 use num_derive::FromPrimitive;
 use off64::int::Off64ReadInt;
 use off64::int::Off64WriteMutInt;
@@ -65,7 +65,7 @@ pub(crate) struct LoadedData {
   pub messages: Messages,
 }
 
-pub(crate) fn rocksdb_load(db: &DB, metrics: Arc<Metrics>) -> LoadedData {
+pub(crate) fn rocksdb_load(db: &DB, metrics: QueueMetrics) -> LoadedData {
   let mut messages = Messages::new(metrics);
   // WARNING: We must use next_id instead of simply getting the maximum ID, as that would cause ID reuse if a message is deleted and then a new one is created in quick succession.
   let mut next_id = db

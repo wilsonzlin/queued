@@ -3,7 +3,6 @@ use serde::Deserialize;
 use std::env::var;
 use std::env::var_os;
 use std::net::Ipv4Addr;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -57,18 +56,6 @@ struct Cli {
   #[arg(long)]
   unix_socket_mode: Option<u32>,
 
-  /// Optional StatsD server to send metrics to.
-  #[arg(long)]
-  statsd: Option<SocketAddr>,
-
-  /// StatsD prefix. Defaults to "queued".
-  #[arg(long)]
-  statsd_prefix: Option<String>,
-
-  /// Tags to add to all StatsD metric values sent. Use the format: `name1:value1,name2:value2,name3:value3`.
-  #[arg(long)]
-  statsd_tags: Option<String>,
-
   /// Batch sync delay time, in microseconds. For advanced usage only.
   #[arg(long)]
   batch_sync_delay_us: Option<u64>,
@@ -87,9 +74,6 @@ struct CfgFile {
   ssl_ca: Option<PathBuf>,
   unix_socket: Option<PathBuf>,
   unix_socket_mode: Option<u32>,
-  statsd: Option<SocketAddr>,
-  statsd_prefix: Option<String>,
-  statsd_tags: Option<String>,
   batch_sync_delay_us: Option<u64>,
 }
 
@@ -104,9 +88,6 @@ pub(crate) struct Cfg {
   pub ssl_ca: Option<PathBuf>,
   pub unix_socket: Option<PathBuf>,
   pub unix_socket_mode: u32,
-  pub statsd: Option<SocketAddr>,
-  pub statsd_prefix: String,
-  pub statsd_tags: Vec<(String, String)>,
   pub batch_sync_delay: Duration,
 }
 
@@ -191,24 +172,6 @@ pub(crate) fn load_cfg() -> Cfg {
       .or(env_parsed("QUEUED_UNIX_SOCKET_MODE"))
       .or(f.unix_socket_mode)
       .unwrap_or(0o770),
-
-    statsd: cli.statsd.or(env_parsed("QUEUED_STATSD")).or(f.statsd),
-
-    statsd_prefix: cli
-      .statsd_prefix
-      .or(env_str("QUEUED_STATSD_PREFIX"))
-      .or(f.statsd_prefix)
-      .unwrap_or("queued".to_string()),
-
-    statsd_tags: cli
-      .statsd_tags
-      .or(env_str("QUEUED_STATSD_TAGS"))
-      .or(f.statsd_tags)
-      .unwrap_or_default()
-      .split(',')
-      .filter_map(|p| p.split_once(':'))
-      .map(|(k, v)| (k.to_string(), v.to_string()))
-      .collect::<Vec<_>>(),
 
     batch_sync_delay: Duration::from_micros(
       cli

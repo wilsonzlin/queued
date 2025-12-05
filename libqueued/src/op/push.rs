@@ -32,10 +32,7 @@ pub struct OpPushOutput {
 
 pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutput> {
   if ctx.suspension.is_push_suspended() {
-    ctx
-      .metrics
-      .suspended_push_counter
-      .fetch_add(1, Ordering::Relaxed);
+    ctx.metrics.inc_suspended_push();
     return Err(OpError::Suspended);
   };
 
@@ -67,10 +64,7 @@ pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutpu
     }
   }
 
-  ctx
-    .metrics
-    .successful_push_counter
-    .fetch_add(n, Ordering::Relaxed);
+  ctx.metrics.inc_successful_push(n);
 
   Ok(OpPushOutput {
     ids: (0..n).map(|i| base_id + i).collect_vec(),

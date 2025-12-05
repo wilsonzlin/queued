@@ -9,7 +9,6 @@ use axum_msgpack::MsgPack;
 use dashmap::DashMap;
 use libqueued::Queued;
 use serde::Serialize;
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,9 +48,6 @@ pub(crate) struct HttpCtx {
   pub(crate) global_api_key: Option<String>,
   // We use Arc because we need to hold a ref to it (i.e. a lock to the map entry) across await points, something that would cause deadlocks in this map.
   pub(crate) queues: DashMap<String, Arc<Queued>>,
-  pub(crate) statsd_endpoint: Option<SocketAddr>,
-  pub(crate) statsd_prefix: String,
-  pub(crate) statsd_tags: Vec<(String, String)>,
 }
 
 impl HttpCtx {

@@ -4,13 +4,14 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 mod cfg;
 mod endpoint;
-mod statsd;
+mod metrics;
 
 use crate::endpoint::api_key::endpoint_list_api_keys;
 use crate::endpoint::api_key::endpoint_remove_api_key;
 use crate::endpoint::api_key::endpoint_set_api_key;
 use crate::endpoint::healthz::endpoint_healthz;
 use crate::endpoint::queue::metrics::endpoint_metrics;
+use crate::endpoint::queue::metrics::endpoint_metrics_global;
 use crate::endpoint::queue::ops::endpoint_delete;
 use crate::endpoint::queue::ops::endpoint_poll;
 use crate::endpoint::queue::ops::endpoint_push;
@@ -21,7 +22,7 @@ use crate::endpoint::queue::throttle::endpoint_get_throttle;
 use crate::endpoint::queue::throttle::endpoint_post_throttle;
 use crate::endpoint::queues::QUEUE_CREATE_OK_MARKER_FILE;
 use crate::endpoint::HttpCtx;
-use crate::statsd::spawn_statsd_emitter;
+use crate::metrics::init_metrics;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::delete;
 use axum::routing::get;
@@ -49,6 +50,9 @@ async fn main() {
   set_up_panic_hook();
   tracing_subscriber::fmt().json().init();
 
+  // Initialize the metrics system first
+  init_metrics();
+
   let cfg = load_cfg();
   let queues = DashMap::<String, Arc<Queued>>::new();
   info!(
@@ -73,19 +77,11 @@ async fn main() {
     let q = Arc::new(
       Queued::load_and_start(&d.path(), libqueued::QueuedCfg {
         batch_sync_delay: cfg.batch_sync_delay,
+        queue_name: name.clone(),
       })
       .await,
     );
     info!(name, "loaded queue");
-    if let Some(addr) = cfg.statsd {
-      spawn_statsd_emitter(
-        addr,
-        &cfg.statsd_prefix,
-        &cfg.statsd_tags,
-        &name,
-        Arc::downgrade(&q),
-      );
-    };
     assert!(queues.insert(name, q).is_none());
   }
   info!(count = queues.len(), "loaded all queues");
@@ -96,14 +92,12 @@ async fn main() {
     data_dir: cfg.data_dir,
     global_api_key: cfg.global_api_key,
     queues,
-    statsd_endpoint: cfg.statsd,
-    statsd_prefix: cfg.statsd_prefix,
-    statsd_tags: cfg.statsd_tags,
   });
 
   #[rustfmt::skip]
   let app = Router::new()
     .route("/healthz", get(endpoint_healthz))
+    .route("/metrics", get(endpoint_metrics_global))
     .route("/api-keys", get(endpoint_list_api_keys))
     .route("/api-key/:apiKey", put(endpoint_set_api_key).delete(endpoint_remove_api_key))
     .route("/queue/:queue", delete(endpoint_queue_delete))

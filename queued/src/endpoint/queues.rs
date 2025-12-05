@@ -2,7 +2,6 @@ use super::HttpCtx;
 use super::QueuedHttpResult;
 use crate::endpoint::qerr;
 use crate::endpoint::qerr_d;
-use crate::statsd::spawn_statsd_emitter;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -88,18 +87,10 @@ pub(crate) async fn endpoint_queue_create(
   let q = Arc::new(
     Queued::load_and_start(&dir, QueuedCfg {
       batch_sync_delay: ctx.batch_sync_delay,
+      queue_name: name.clone(),
     })
     .await,
   );
-  if let Some(addr) = ctx.statsd_endpoint {
-    spawn_statsd_emitter(
-      addr,
-      &ctx.statsd_prefix,
-      &ctx.statsd_tags,
-      &name,
-      Arc::downgrade(&q),
-    );
-  };
   match tokio::fs::write(dir.join(QUEUE_CREATE_OK_MARKER_FILE), "").await {
     Ok(()) => {}
     Err(e) => {

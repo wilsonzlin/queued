@@ -10,7 +10,6 @@ use off64::int::create_u32_le;
 use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 use tokio::task::spawn_blocking;
 
 #[derive(Deserialize)]
@@ -27,10 +26,7 @@ pub struct OpUpdateOutput {
 
 pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdateOutput> {
   if ctx.suspension.is_update_suspended() {
-    ctx
-      .metrics
-      .suspended_update_counter
-      .fetch_add(1, Ordering::Relaxed);
+    ctx.metrics.inc_suspended_update();
     return Err(OpError::Suspended);
   };
 
@@ -39,10 +35,7 @@ pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdat
     .lock()
     .remove_if_poll_tag_matches(req.id, req.poll_tag)
   {
-    ctx
-      .metrics
-      .missing_update_counter
-      .fetch_add(1, Ordering::Relaxed);
+    ctx.metrics.inc_missing_update();
     return Err(OpError::MessageNotFound);
   };
   let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs as i64;
@@ -70,10 +63,7 @@ pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdat
     .lock()
     .insert(req.id, new_visible_time, new_poll_tag);
 
-  ctx
-    .metrics
-    .successful_update_counter
-    .fetch_add(1, Ordering::Relaxed);
+  ctx.metrics.inc_successful_update();
 
   Ok(OpUpdateOutput { new_poll_tag })
 }
