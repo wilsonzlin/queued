@@ -71,6 +71,7 @@ async fn main() {
   let queued = Arc::new(
     Queued::load_and_start(&cli.data_dir, QueuedCfg {
       batch_sync_delay: Duration::from_millis(10),
+      queue_name: "benchmark".to_string(),
     })
     .await,
   );

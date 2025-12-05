@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
 use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
+use crate::metrics;
 use rocksdb::WriteBatchWithTransaction;
 use serde::Deserialize;
 use serde::Serialize;
@@ -25,7 +26,7 @@ pub struct OpDeleteOutput {}
 
 pub(crate) async fn op_delete(ctx: &Ctx, req: OpDeleteInput) -> OpResult<OpDeleteOutput> {
   if ctx.suspension.is_delete_suspended() {
-    ctx.metrics.inc_suspended_delete();
+    metrics::inc_suspended_delete(&ctx.queue_name);
     return Err(OpError::Suspended);
   };
 
@@ -34,7 +35,7 @@ pub(crate) async fn op_delete(ctx: &Ctx, req: OpDeleteInput) -> OpResult<OpDelet
     let mut msgs = ctx.messages.lock();
     for m in req.messages {
       if !msgs.remove_if_poll_tag_matches(m.id, m.poll_tag) {
-        ctx.metrics.inc_missing_delete();
+        metrics::inc_missing_delete(&ctx.queue_name);
         continue;
       };
       b.delete(rocksdb_key(RocksDbKeyPrefix::MessageData, m.id));
@@ -43,7 +44,7 @@ pub(crate) async fn op_delete(ctx: &Ctx, req: OpDeleteInput) -> OpResult<OpDelet
         RocksDbKeyPrefix::MessageVisibleTimestampSec,
         m.id,
       ));
-      ctx.metrics.inc_successful_delete();
+      metrics::inc_successful_delete(&ctx.queue_name);
     }
   };
   let db = ctx.db.clone();

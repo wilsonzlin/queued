@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
 use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
+use crate::metrics;
 use chrono::Utc;
 use itertools::Itertools;
 use off64::int::create_i40_le;
@@ -32,14 +33,13 @@ pub struct OpPushOutput {
 
 pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutput> {
   if ctx.suspension.is_push_suspended() {
-    ctx.metrics.inc_suspended_push();
+    metrics::inc_suspended_push(&ctx.queue_name);
     return Err(OpError::Suspended);
   };
 
   let n = req.messages.len() as u64;
   let base_id = ctx.next_id.fetch_add(n, Ordering::Relaxed);
   let mut to_add = Vec::new();
-  // We must not update the `next_id` key as part of this write batch as we can never be certain that batches are written in order. Instead, we'll do so as part of `submit_and_wait` which guarantees that (if successful) the `next_id` has always persisted to a value greater than or equal to what we want.
   let mut b = WriteBatchWithTransaction::default();
   for (i, msg) in req.messages.into_iter().enumerate() {
     let id = base_id + i as u64;
@@ -64,7 +64,7 @@ pub(crate) async fn op_push(ctx: &Ctx, req: OpPushInput) -> OpResult<OpPushOutpu
     }
   }
 
-  ctx.metrics.inc_successful_push(n);
+  metrics::inc_successful_push(&ctx.queue_name, n);
 
   Ok(OpPushOutput {
     ids: (0..n).map(|i| base_id + i).collect_vec(),

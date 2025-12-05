@@ -11,7 +11,6 @@ use crate::batch_sync::BatchSync;
 use ctx::Ctx;
 use db::rocksdb_load;
 use db::rocksdb_open;
-use metrics::QueueMetrics;
 use op::delete::op_delete;
 use op::delete::OpDeleteInput;
 use op::delete::OpDeleteOutput;
@@ -38,11 +37,9 @@ use throttler::Throttler;
 #[derive(Clone)]
 pub struct QueuedCfg {
   pub batch_sync_delay: Duration,
-  /// Name of the queue, used for metric labels.
   pub queue_name: String,
 }
 
-// This is intentionally not cheaply cloneable to make it clear and explicit that dropping this will safely close the database and free all resources.
 pub struct Queued {
   ctx: Ctx,
 }
@@ -55,17 +52,14 @@ pub struct ThrottleState {
 
 impl Queued {
   pub async fn load_and_start(data_dir: &Path, cfg: QueuedCfg) -> Self {
-    let metrics = QueueMetrics::new(&cfg.queue_name);
-
     let db = rocksdb_open(data_dir);
-    let data = rocksdb_load(&db, metrics.clone());
+    let data = rocksdb_load(&db, cfg.queue_name.clone());
 
     let ctx = Ctx {
-      // We can safely create a strong reference clone to the database, as BatchSync's background thread will stop once the channel sender is dropped, which will then drop the DB.
       batch_sync: BatchSync::start(cfg.batch_sync_delay, db.clone(), data.next_id),
       db,
       messages: Mutex::new(data.messages),
-      metrics,
+      queue_name: cfg.queue_name,
       next_id: AtomicU64::new(data.next_id),
       suspension: Arc::new(SuspendState::default()),
       throttler: Mutex::new(None),
@@ -98,8 +92,8 @@ impl Queued {
     self.ctx.messages.lock().oldest_time()
   }
 
-  pub fn metrics(&self) -> &QueueMetrics {
-    &self.ctx.metrics
+  pub fn queue_name(&self) -> &str {
+    &self.ctx.queue_name
   }
 
   pub fn suspension(&self) -> Arc<SuspendState> {

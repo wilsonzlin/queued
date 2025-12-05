@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
 use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
+use crate::metrics;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::iter;
@@ -22,7 +23,7 @@ pub struct OpPollInput {
   pub count: usize,
   pub visibility_timeout_secs: i64,
   #[serde(default)]
-  pub ignore_existing_visibility_timeouts: bool, // This can be used for debugging purposes e.g. visibility timeout was set incorrectly.
+  pub ignore_existing_visibility_timeouts: bool,
 }
 
 #[derive(Serialize, Default)]
@@ -40,25 +41,29 @@ pub struct OpPollOutput {
 
 pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutput> {
   if ctx.suspension.is_poll_suspended() {
-    ctx.metrics.inc_suspended_poll();
+    metrics::inc_suspended_poll(&ctx.queue_name);
     return Err(OpError::Suspended);
   };
 
   {
     let mut throttler = ctx.throttler.lock();
     if throttler.is_some() && !throttler.as_mut().unwrap().increment_count() {
-      ctx.metrics.inc_throttled_poll();
+      metrics::inc_throttled_poll(&ctx.queue_name);
       return Err(OpError::Throttled);
     };
   };
 
-  let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs as i64;
+  let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs;
 
   let msgs = ctx
     .messages
     .lock()
     .remove_earliest_n(req.count, req.ignore_existing_visibility_timeouts);
   assert!(msgs.len() <= req.count);
+
+  if msgs.is_empty() {
+    metrics::inc_empty_poll(&ctx.queue_name);
+  }
 
   let mut b = WriteBatchWithTransaction::default();
   for &(id, old_poll_tag) in msgs.iter() {
@@ -103,7 +108,7 @@ pub(crate) async fn op_poll(ctx: &Ctx, req: OpPollInput) -> OpResult<OpPollOutpu
     }
   };
 
-  ctx.metrics.inc_successful_poll(msgs.len() as u64);
+  metrics::inc_successful_poll(&ctx.queue_name, msgs.len() as u64);
 
   Ok(OpPollOutput {
     messages: msgs

@@ -22,7 +22,6 @@ use crate::endpoint::queue::throttle::endpoint_get_throttle;
 use crate::endpoint::queue::throttle::endpoint_post_throttle;
 use crate::endpoint::queues::QUEUE_CREATE_OK_MARKER_FILE;
 use crate::endpoint::HttpCtx;
-use crate::metrics::init_metrics;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::delete;
 use axum::routing::get;
@@ -50,8 +49,8 @@ async fn main() {
   set_up_panic_hook();
   tracing_subscriber::fmt().json().init();
 
-  // Initialize the metrics system first
-  init_metrics();
+  // Initialize metrics first
+  metrics::init();
 
   let cfg = load_cfg();
   let queues = DashMap::<String, Arc<Queued>>::new();

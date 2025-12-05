@@ -52,51 +52,12 @@ export class QueuedQueueClient {
     return qpp(this.queue);
   }
 
-  async metrics() {
-    const raw = await this.svc.rawRequest(
-      "GET",
-      `${this.qpp}/metrics`,
-      undefined,
-    );
-    const p = new VStruct({
-      empty_poll_counter: new VInteger(0),
-      message_counter: new VInteger(0),
-      missing_delete_counter: new VInteger(0),
-      missing_update_counter: new VInteger(0),
-      successful_delete_counter: new VInteger(0),
-      successful_poll_counter: new VInteger(0),
-      successful_push_counter: new VInteger(0),
-      successful_update_counter: new VInteger(0),
-      suspended_delete_counter: new VInteger(0),
-      suspended_poll_counter: new VInteger(0),
-      suspended_push_counter: new VInteger(0),
-      suspended_update_counter: new VInteger(0),
-      throttled_poll_counter: new VInteger(0),
-
-      first_message_visibility_timeout_sec_gauge: new VInteger(0),
-      last_message_visibility_timeout_sec_gauge: new VInteger(0),
-      longest_unpolled_message_sec_gauge: new VInteger(0),
-    }).parseRoot(raw);
-    return {
-      emptyPollCounter: p.empty_poll_counter,
-      messageCounter: p.message_counter,
-      missingDeleteCounter: p.missing_delete_counter,
-      missingUpdateCounter: p.missing_update_counter,
-      successfulDeleteCounter: p.successful_delete_counter,
-      successfulPollCounter: p.successful_poll_counter,
-      successfulPushCounter: p.successful_push_counter,
-      successfulUpdateCounter: p.successful_update_counter,
-      suspendedDeleteCounter: p.suspended_delete_counter,
-      suspendedPollCounter: p.suspended_poll_counter,
-      suspendedPushCounter: p.suspended_push_counter,
-      suspendedUpdateCounter: p.suspended_update_counter,
-      throttledPollCounter: p.throttled_poll_counter,
-      firstMessageVisibilityTimeoutSecGauge:
-        p.first_message_visibility_timeout_sec_gauge,
-      lastMessageVisibilityTimeoutSecGauge:
-        p.last_message_visibility_timeout_sec_gauge,
-      longestUnpolledMessageSecGauge: p.longest_unpolled_message_sec_gauge,
-    };
+  /**
+   * Get queue metrics in Prometheus text format.
+   * Returns the raw Prometheus metrics output.
+   */
+  async metrics(): Promise<string> {
+    return await this.svc.rawRequestText("GET", `${this.qpp}/metrics`);
   }
 
   async pollMessagesRaw(
@@ -231,6 +192,51 @@ export class QueuedClient {
 
   queue(queueName: string) {
     return new QueuedQueueClient(this, queueName);
+  }
+
+  /**
+   * Get global metrics for all queues in Prometheus text format.
+   * Returns the raw Prometheus metrics output.
+   */
+  async metrics(): Promise<string> {
+    return await this.rawRequestText("GET", "/metrics");
+  }
+
+  async rawRequestText(method: string, path: string): Promise<string> {
+    const reqUrl = new URL(`${this.opts.endpoint}${path}`);
+    const reqOpt: https.RequestOptions = {
+      method,
+      headers: withoutUndefined({
+        Authorization: this.opts.apiKey,
+      }),
+      ca: this.opts.ssl?.ca,
+      cert: this.opts.ssl?.cert,
+      key: this.opts.ssl?.key,
+      servername: this.opts.ssl?.servername,
+      rejectUnauthorized: this.opts.ssl?.rejectUnauthorized,
+    };
+    const res = await new Promise<IncomingMessage>((resolve, reject) => {
+      const req =
+        reqUrl.protocol === "http:"
+          ? http.request(reqUrl, reqOpt)
+          : https.request(reqUrl, reqOpt);
+      req.on("error", reject).on("response", resolve);
+      req.end();
+    });
+    const resBodyRaw = await new Promise<Buffer>((resolve, reject) => {
+      const chunks = Array<Buffer>();
+      res
+        .on("error", reject)
+        .on("data", (c) => chunks.push(c))
+        .on("end", () => resolve(Buffer.concat(chunks)));
+    });
+    if (res.statusCode === 401) {
+      throw new QueuedUnauthorizedError();
+    }
+    if (res.statusCode! < 200 || res.statusCode! > 299) {
+      throw new QueuedApiError(res.statusCode!, decodeUtf8(resBodyRaw), undefined);
+    }
+    return decodeUtf8(resBodyRaw);
   }
 
   async rawRequest(method: string, path: string, body: any) {

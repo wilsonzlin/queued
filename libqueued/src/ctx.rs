@@ -1,6 +1,5 @@
 use crate::batch_sync::BatchSync;
 use crate::messages::Messages;
-use crate::metrics::QueueMetrics;
 use crate::suspend::SuspendState;
 use crate::throttler::Throttler;
 use parking_lot::Mutex;
@@ -11,7 +10,7 @@ pub(crate) struct Ctx {
   pub batch_sync: BatchSync,
   pub db: Arc<rocksdb::DB>,
   pub messages: Mutex<Messages>,
-  pub metrics: QueueMetrics,
+  pub queue_name: String,
   pub next_id: AtomicU64,
   pub suspension: Arc<SuspendState>,
   pub throttler: Mutex<Option<Throttler>>,

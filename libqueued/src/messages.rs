@@ -1,4 +1,4 @@
-use crate::metrics::QueueMetrics;
+use crate::metrics;
 use chrono::Utc;
 use itertools::Itertools;
 use std::collections::hash_map::Entry;
@@ -9,16 +9,15 @@ use std::collections::HashSet;
 type TimestampSec = i64;
 
 pub(crate) struct Messages {
-  metrics: QueueMetrics,
-  // We use a map instead of a heap as we want to be able to remove/mutate individual specific entries.
+  queue_name: String,
   ordered_by_visible_time: BTreeMap<TimestampSec, HashSet<u64>>,
   by_id: HashMap<u64, (TimestampSec, u32)>,
 }
 
 impl Messages {
-  pub fn new(metrics: QueueMetrics) -> Self {
+  pub fn new(queue_name: String) -> Self {
     Messages {
-      metrics,
+      queue_name,
       by_id: HashMap::new(),
       ordered_by_visible_time: BTreeMap::new(),
     }
@@ -55,7 +54,7 @@ impl Messages {
     let None = self.by_id.insert(id, (ts, poll_tag)) else {
       panic!("ID already exists");
     };
-    self.metrics.inc_message_count();
+    metrics::inc_message_count(&self.queue_name);
   }
 
   fn remove_if<F: Fn((TimestampSec, u32)) -> bool>(
@@ -74,7 +73,7 @@ impl Messages {
     if set.is_empty() {
       self.ordered_by_visible_time.remove(&ts).unwrap();
     }
-    self.metrics.dec_message_count();
+    metrics::dec_message_count(&self.queue_name);
     Some((ts, poll_tag))
   }
 
@@ -114,7 +113,7 @@ impl Messages {
       }
     }
     assert!(removed_ids.len() <= n);
-    self.metrics.dec_message_count_by(removed_ids.len() as u64);
+    metrics::dec_message_count_by(&self.queue_name, removed_ids.len() as u64);
     removed_ids
       .into_iter()
       .map(|id| (id, self.by_id.remove(&id).unwrap().1))

@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::db::rocksdb_key;
 use crate::db::rocksdb_write_opts;
 use crate::db::RocksDbKeyPrefix;
+use crate::metrics;
 use chrono::Utc;
 use off64::int::create_i40_le;
 use off64::int::create_u32_le;
@@ -26,7 +27,7 @@ pub struct OpUpdateOutput {
 
 pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdateOutput> {
   if ctx.suspension.is_update_suspended() {
-    ctx.metrics.inc_suspended_update();
+    metrics::inc_suspended_update(&ctx.queue_name);
     return Err(OpError::Suspended);
   };
 
@@ -35,10 +36,10 @@ pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdat
     .lock()
     .remove_if_poll_tag_matches(req.id, req.poll_tag)
   {
-    ctx.metrics.inc_missing_update();
+    metrics::inc_missing_update(&ctx.queue_name);
     return Err(OpError::MessageNotFound);
   };
-  let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs as i64;
+  let new_visible_time = Utc::now().timestamp() + req.visibility_timeout_secs;
   let new_poll_tag = req.poll_tag + 1;
 
   let db = ctx.db.clone();
@@ -63,7 +64,7 @@ pub(crate) async fn op_update(ctx: &Ctx, req: OpUpdateInput) -> OpResult<OpUpdat
     .lock()
     .insert(req.id, new_visible_time, new_poll_tag);
 
-  ctx.metrics.inc_successful_update();
+  metrics::inc_successful_update(&ctx.queue_name);
 
   Ok(OpUpdateOutput { new_poll_tag })
 }

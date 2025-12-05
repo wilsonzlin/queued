@@ -1,29 +1,19 @@
-//! Metrics initialization and management using the `metrics` crate ecosystem.
-//!
-//! This module sets up the Prometheus exporter as the global metrics recorder.
-//! All metrics from `libqueued` are automatically exported via the Prometheus
-//! endpoint.
+//! Metrics initialization using the `metrics` crate with Prometheus exporter.
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use once_cell::sync::Lazy;
 
-/// Global handle to the Prometheus metrics recorder.
-/// Use `METRICS_HANDLE.render()` to get the current metrics in Prometheus format.
+/// Global Prometheus metrics handle.
 pub static METRICS_HANDLE: Lazy<PrometheusHandle> = Lazy::new(|| {
-    let builder = PrometheusBuilder::new();
-    let handle = builder
+    let handle = PrometheusBuilder::new()
         .install_recorder()
-        .expect("failed to install Prometheus metrics recorder");
+        .expect("failed to install Prometheus recorder");
     
-    // Register metric descriptions
     libqueued::metrics::describe_metrics();
-    
     handle
 });
 
-/// Initialize the metrics system.
-/// This must be called early in the application startup.
-pub fn init_metrics() {
-    // Force initialization of the lazy static
+/// Initialize metrics. Call early in startup.
+pub fn init() {
     Lazy::force(&METRICS_HANDLE);
 }

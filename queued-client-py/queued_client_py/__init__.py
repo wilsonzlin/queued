@@ -5,7 +5,6 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from urllib.parse import quote
-import json
 import msgpack
 import requests
 
@@ -19,6 +18,7 @@ class QueuedApiError(Exception):
     def __init__(self, status: int, error: Optional[str], error_details: Optional[Any]):
         error_message = f"Request to queued failed with status {status}: {error}"
         if error_details:
+            import json
             error_message += f"\n\n\tDetails: {json.dumps(error_details, indent=2)}"
         super().__init__(error_message)
         self.status = status
@@ -28,27 +28,6 @@ class QueuedApiError(Exception):
 
 def qpp(name: str) -> str:
     return f"/queue/{quote(name, safe='')}"
-
-
-@dataclass
-class QueueMetrics:
-    empty_poll_counter: int
-    message_counter: int
-    missing_delete_counter: int
-    missing_update_counter: int
-    successful_delete_counter: int
-    successful_poll_counter: int
-    successful_push_counter: int
-    successful_update_counter: int
-    suspended_delete_counter: int
-    suspended_poll_counter: int
-    suspended_push_counter: int
-    suspended_update_counter: int
-    throttled_poll_counter: int
-
-    first_message_visibility_timeout_sec_gauge: int
-    last_message_visibility_timeout_sec_gauge: int
-    longest_unpolled_message_sec_gauge: int
 
 
 @dataclass
@@ -74,9 +53,14 @@ class QueuedQueueClient:
         self.svc = svc
         self.queue_name = queue_name
 
-    def metrics(self) -> QueueMetrics:
-        res = self.svc.raw_request("GET", f"{qpp(self.queue_name)}/metrics", None)
-        return QueueMetrics(**res)
+    def metrics(self) -> str:
+        """
+        Get queue metrics in Prometheus text format.
+        
+        Returns the raw Prometheus metrics output. Use a Prometheus client
+        library to parse if structured data is needed.
+        """
+        return self.svc.raw_request_text("GET", f"{qpp(self.queue_name)}/metrics")
 
     def poll_messages_raw(
         self,
@@ -177,6 +161,35 @@ class QueuedClient:
 
     def queue(self, queue_name: str) -> QueuedQueueClient:
         return QueuedQueueClient(self, queue_name)
+
+    def metrics(self) -> str:
+        """
+        Get global metrics for all queues in Prometheus text format.
+        
+        Returns the raw Prometheus metrics output. Use a Prometheus client
+        library to parse if structured data is needed.
+        """
+        return self.raw_request_text("GET", "/metrics")
+
+    def raw_request_text(self, method: str, path: str) -> str:
+        """Make a request expecting text response (for metrics)."""
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = self.api_key
+        res = requests.request(
+            method=method,
+            url=self.endpoint + path,
+            headers=headers,
+        )
+        if res.status_code == 401:
+            raise QueuedUnauthorizedError()
+        if not (200 <= res.status_code < 300):
+            raise QueuedApiError(
+                res.status_code,
+                res.text,
+                None,
+            )
+        return res.text
 
     def raw_request(
         self, method: str, path: str, body: Optional[Dict[str, Any]]

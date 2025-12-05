@@ -6,6 +6,7 @@ Fast zero-configuration single-binary simple queue service.
 - Programmatic or temporary flow control with rate limiting and suspension.
 - Fast I/O with minimal writes and strong API-guaranteed durability.
 - Available as simple library for direct integration into larger programs.
+- **Prometheus-compatible metrics** for monitoring and alerting.
 
 ## Quick start
 
@@ -153,104 +154,64 @@ This will rate limit poll requests to 100 every 60 seconds. No other endpoint is
 
 `GET /healthz` returns the current build version.
 
-`GET /queue/:queue/metrics` returns metrics in the Prometheus or JSON (`Accept: application/json`) format:
+## Metrics
+
+Metrics are exposed in **Prometheus text format** via HTTP endpoints:
+
+- `GET /metrics` - Global metrics for all queues
+- `GET /queue/:queue/metrics` - Metrics for a specific queue (also updates visibility timeout gauges)
+
+### Available Metrics
+
+All metrics include a `queue` label to identify the queue.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `queued_messages` | Gauge | Current message count in the queue |
+| `queued_successful_pushes_total` | Counter | Total successful push operations |
+| `queued_successful_polls_total` | Counter | Total successful poll operations |
+| `queued_successful_updates_total` | Counter | Total successful update operations |
+| `queued_successful_deletes_total` | Counter | Total successful delete operations |
+| `queued_empty_polls_total` | Counter | Poll requests with no message available |
+| `queued_missing_updates_total` | Counter | Update requests where message not found |
+| `queued_missing_deletes_total` | Counter | Delete requests where message not found |
+| `queued_suspended_pushes_total` | Counter | Push requests while suspended |
+| `queued_suspended_polls_total` | Counter | Poll requests while suspended |
+| `queued_suspended_updates_total` | Counter | Update requests while suspended |
+| `queued_suspended_deletes_total` | Counter | Delete requests while suspended |
+| `queued_throttled_polls_total` | Counter | Poll requests that were throttled |
+| `queued_visibility_timeout_first_seconds` | Gauge | Seconds until first message becomes visible |
+| `queued_visibility_timeout_last_seconds` | Gauge | Seconds until last message becomes visible |
+| `queued_oldest_unpolled_seconds` | Gauge | Age of oldest unpolled message |
+
+### Example
 
 ```
-# HELP queued_empty_poll Total number of poll requests that failed due to no message being available.
-# TYPE queued_empty_poll counter
-queued_empty_poll 0 1678525380549
+$ curl http://localhost:3333/metrics
 
-# HELP queued_invisible Amount of invisible messages currently in the queue. They may have been created, polled, or updated.
-# TYPE queued_invisible gauge
-queued_invisible 0 1678525380549
+# HELP queued_messages Current message count in the queue
+# TYPE queued_messages gauge
+queued_messages{queue="my-queue"} 1000
 
-# HELP queued_io_sync_background_loops Total number of delayed sync background loop iterations.
-# TYPE queued_io_sync_background_loops counter
-queued_io_sync_background_loops 19601 1678525380549
+# HELP queued_successful_pushes_total Successful push requests
+# TYPE queued_successful_pushes_total counter
+queued_successful_pushes_total{queue="my-queue"} 5000
 
-# HELP queued_io_sync Total number of fsync and fdatasync syscalls.
-# TYPE queued_io_sync counter
-queued_io_sync 0 1678525380549
+# HELP queued_successful_polls_total Successful poll requests  
+# TYPE queued_successful_polls_total counter
+queued_successful_polls_total{queue="my-queue"} 4000
+```
 
-# HELP queued_io_sync_delayed Total number of requested syncs that were delayed until a later time.
-# TYPE queued_io_sync_delayed counter
-queued_io_sync_delayed 0 1678525380549
+### Prometheus Integration
 
-# HELP queued_io_sync_longest_delay_us Total number of microseconds spent waiting for a sync by one or more delayed syncs.
-# TYPE queued_io_sync_longest_delay_us counter
-queued_io_sync_longest_delay_us 0 1678525380549
+Add to your `prometheus.yml`:
 
-# HELP queued_io_sync_shortest_delay_us Total number of microseconds spent waiting after a final delayed sync before the actual sync.
-# TYPE queued_io_sync_shortest_delay_us counter
-queued_io_sync_shortest_delay_us 0 1678525380549
-
-# HELP queued_io_sync_us Total number of microseconds spent in fsync and fdatasync syscalls.
-# TYPE queued_io_sync_us counter
-queued_io_sync_us 0 1678525380549
-
-# HELP queued_io_write_bytes Total number of bytes written.
-# TYPE queued_io_write_bytes counter
-queued_io_write_bytes 0 1678525380549
-
-# HELP queued_io_write Total number of write syscalls.
-# TYPE queued_io_write counter
-queued_io_write 0 1678525380549
-
-# HELP queued_io_write_us Total number of microseconds spent in write syscalls.
-# TYPE queued_io_write_us counter
-queued_io_write_us 0 1678525380549
-
-# HELP queued_missing_delete Total number of delete requests that failed due to the requested message not being found.
-# TYPE queued_missing_delete counter
-queued_missing_delete 0 1678525380549
-
-# HELP queued_missing_update Total number of update requests that failed due to the requested message not being found.
-# TYPE queued_missing_update counter
-queued_missing_update 0 1678525380549
-
-# HELP queued_successful_delete Total number of delete requests that did delete a message successfully.
-# TYPE queued_successful_delete counter
-queued_successful_delete 0 1678525380549
-
-# HELP queued_successful_poll Total number of poll requests that did poll a message successfully.
-# TYPE queued_successful_poll counter
-queued_successful_poll 0 1678525380549
-
-# HELP queued_successful_push Total number of push requests that did push a message successfully.
-# TYPE queued_successful_push counter
-queued_successful_push 0 1678525380549
-
-# HELP queued_successful_update Total number of update requests that did update a message successfully.
-# TYPE queued_successful_update counter
-queued_successful_update 0 1678525380549
-
-# HELP queued_suspended_delete Total number of delete requests while the endpoint was suspended.
-# TYPE queued_suspended_delete counter
-queued_suspended_delete 0 1678525380549
-
-# HELP queued_suspended_poll Total number of poll requests while the endpoint was suspended.
-# TYPE queued_suspended_poll counter
-queued_suspended_poll 0 1678525380549
-
-# HELP queued_suspended_push Total number of push requests while the endpoint was suspended.
-# TYPE queued_suspended_push counter
-queued_suspended_push 0 1678525380549
-
-# HELP queued_suspended_update Total number of update requests while the endpoint was suspended.
-# TYPE queued_suspended_update counter
-queued_suspended_update 0 1678525380549
-
-# HELP queued_throttled_poll Total number of poll requests that were throttled.
-# TYPE queued_throttled_poll counter
-queued_throttled_poll 0 1678525380549
-
-# HELP queued_vacant How many more messages that can currently be pushed into the queue.
-# TYPE queued_vacant gauge
-queued_vacant 0 1678525380549
-
-# HELP queued_visible Amount of visible messages currently in the queue, which can be polled. This may be delayed by a few seconds.
-# TYPE queued_visible gauge
-queued_visible 4000000 1678525380549
+```yaml
+scrape_configs:
+  - job_name: 'queued'
+    static_configs:
+      - targets: ['localhost:3333']
+    metrics_path: '/metrics'
 ```
 
 ## Important details
